@@ -1,0 +1,33 @@
+# AI Job Hunter (自动求职智能体) 配置文件示例
+# 复制本文件为 config.toml 并按需修改
+
+[search]
+# 检索意向岗位关键词
+keywords = ["Python", "AI应用开发", "自动化", "爬虫"]
+# 意向城市
+cities = ["全国", "远程"]
+# 期望薪资下限 (K)
+salary_floor = 8
+
+[browser]
+# Chrome CDP 调试端口
+port = 9222
+# 用户数据目录路径（存放独立登录态缓存，避免干扰日常浏览器）
+user_data_dir = "data/chrome-profile"
+# Chrome 可执行文件路径（留空则自动探测系统默认安装路径）
+exe = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+
+[llm]
+# 物理级防偷跑机制：默认关闭外部计费调用，全流程优先走本地规则
+enabled = false
+allow_paid_api = false
+provider = "local_rule"
+base_url = "http://127.0.0.1:11434/v1"
+model = "rule-fallback"
+timeout = 60
+max_output_tokens = 1500
+
+[paths]
+db = "data/jobs.sqlite"
+dump = "data/dump"
+report = "data/report.md"

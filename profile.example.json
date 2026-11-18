@@ -1,0 +1,40 @@
+{
+  "name": "张三",
+  "age": 25,
+  "headline": "Python 工程师 / AI 自动化 / 数据处理",
+  "city": "上海",
+  "remote_ok": true,
+  "city_preferred": ["上海", "杭州", "远程", "全国"],
+  "salary_floor": 10,
+  "directions": [
+    {
+      "name": "Python 开发",
+      "keywords": ["python", "后端开发", "接口开发", "脚本开发", "自动化"]
+    },
+    {
+      "name": "AI 应用与智能体",
+      "keywords": ["ai应用", "agent", "工作流", "workflow", "提示词", "rag"]
+    },
+    {
+      "name": "自动化与数据采集",
+      "keywords": ["自动化", "爬虫", "采集", "rpa", "浏览器自动化", "cdp"]
+    }
+  ],
+  "capabilities": [
+    {
+      "name": "Python 应用与自动化脚本",
+      "level": 4,
+      "keywords": ["python", "fastapi", "flask", "sqlite", "mysql", "api对接"],
+      "evidence": "自研 CDP 自动化脚本、API 整合流水线"
+    },
+    {
+      "name": "浏览器自动化与数据处理",
+      "level": 4,
+      "keywords": ["自动化", "cdp", "爬虫", "采集", "数据清洗"],
+      "evidence": "编写纯标准库 CDP 驱动，完成网页数据解析与入库"
+    }
+  ],
+  "hard_blocks": [
+    "销售", "电话销售", "客服专员", "地推", "导购"
+  ]
+}

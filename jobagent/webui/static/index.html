@@ -1,0 +1,1045 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 求职管理面板</title>
+<style>
+  :root{
+    --bg:#f4f6f8; --panel:#ffffff; --line:#e6e9ed; --line-2:#d8dde3;
+    --ink:#191d22; --ink-2:#4b5259; --ink-3:#818a94;
+    --accent:#1f5fa8; --accent-2:#eaf1f9; --accent-line:#cfe0f2;
+    --ok:#137a43; --ok-bg:#e9f6ee; --ok-line:#cfe9d9;
+    --warn:#a15c07; --warn-bg:#fdf4e5; --warn-line:#f0dcbb;
+    --bad:#ad1f1f; --bad-bg:#fdecec; --bad-line:#f2cccc;
+    --r:10px; --r-sm:8px;
+    --shadow:0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
+    --side-w:236px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--ink);font-size:13.5px;line-height:1.55;
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,-apple-system,"Segoe UI",sans-serif;
+    -webkit-font-smoothing:antialiased}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .app{display:grid;grid-template-columns:var(--side-w) minmax(0,1fr);min-height:100vh}
+  .side{background:var(--panel);border-right:1px solid var(--line);padding:18px 12px 14px;
+    display:flex;flex-direction:column;gap:14px;position:sticky;top:0;height:100vh}
+  .brand-title{font-size:15px;font-weight:700;letter-spacing:.2px}
+  .brand-sub{font-size:12px;color:var(--ink-3);margin-top:2px}
+  .nav{display:flex;flex-direction:column;gap:2px}
+  .nav button{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;
+    padding:9px 11px;border:0;border-radius:var(--r-sm);background:transparent;color:var(--ink-2);
+    font:inherit;text-align:left;cursor:pointer;white-space:nowrap}
+  .nav button:hover{background:#f5f7fa;color:var(--ink)}
+  .nav button.active{background:var(--accent-2);color:var(--accent);font-weight:600}
+  .nav .n{font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+  .nav button.active .n{color:var(--accent)}
+  .side-foot{margin-top:auto;display:flex;flex-direction:column;gap:6px;font-size:12px;
+    color:var(--ink-3);border-top:1px solid var(--line);padding-top:12px}
+  .main{min-width:0;display:flex;flex-direction:column}
+  .topbar{position:sticky;top:0;z-index:6;display:flex;flex-wrap:wrap;gap:8px 18px;
+    align-items:center;padding:11px 22px;background:rgba(255,255,255,.93);
+    backdrop-filter:saturate(140%) blur(6px);border-bottom:1px solid var(--line)}
+  .kpi{display:flex;align-items:baseline;gap:6px;font-size:12.5px;color:var(--ink-3)}
+  .kpi b{font-size:14px;color:var(--ink);font-variant-numeric:tabular-nums}
+  .kpi b.ok{color:var(--ok)} .kpi b.bad{color:var(--bad)}
+  .content{padding:18px 22px 72px;width:100%;max-width:1680px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+    box-shadow:var(--shadow);padding:16px 18px;margin-bottom:14px}
+  .card > h2{margin:0;font-size:14px;font-weight:700}
+  .card > .hint{color:var(--ink-3);font-size:12.5px;margin:4px 0 14px}
+  .card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .grid-2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+  .row.tight{gap:8px;align-items:center}
+  .field{display:flex;flex-direction:column;gap:4px;min-width:0}
+  .field > label{font-size:12px;color:var(--ink-3)}
+  input[type=text],input[type=number],select,textarea{font:inherit;padding:7px 10px;
+    border:1px solid var(--line-2);border-radius:var(--r-sm);background:#fff;color:var(--ink);min-width:0}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--accent-2);border-color:var(--accent)}
+  textarea{width:100%;min-height:120px;resize:vertical;line-height:1.6}
+  .btn{font:inherit;padding:8px 14px;border:1px solid var(--line-2);border-radius:var(--r-sm);
+    background:#fff;color:var(--ink);cursor:pointer}
+  .btn:hover{background:#f7f9fb}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover{background:#1a5393}
+  .btn.small{padding:5px 10px;font-size:12.5px}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn:focus-visible,.nav button:focus-visible,tr.clickable:focus-visible{
+    outline:2px solid var(--accent);outline-offset:2px}
+  .check{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-2)}
+  table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
+  th{position:sticky;top:0;z-index:1;background:#fafbfc;color:var(--ink-3);font-weight:600;
+    font-size:12.5px;text-align:left;padding:9px 10px;border-bottom:1px solid var(--line-2);white-space:nowrap}
+  td{padding:10px;border-bottom:1px solid var(--line);vertical-align:top}
+  tbody tr:last-child td{border-bottom:0}
+  tr.clickable{cursor:pointer}
+  tr.clickable:hover td{background:#f8fafc}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .nowrap{white-space:nowrap}
+  .small{font-size:12.5px}
+  .muted{color:var(--ink-3)}
+  .cell-main{font-weight:600}
+  .tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;
+    border:1px solid var(--line);background:#fafbfc;color:var(--ink-2);white-space:nowrap}
+  .tag.ok{background:var(--ok-bg);border-color:var(--ok-line);color:var(--ok)}
+  .tag.warn{background:var(--warn-bg);border-color:var(--warn-line);color:var(--warn)}
+  .tag.bad{background:var(--bad-bg);border-color:var(--bad-line);color:var(--bad)}
+  .tag.info{background:var(--accent-2);border-color:var(--accent-line);color:var(--accent)}
+  .tags{display:flex;flex-wrap:wrap;gap:4px}
+  details{border:1px solid var(--line);border-radius:var(--r-sm);margin-bottom:8px;background:#fff}
+  details > summary{cursor:pointer;padding:9px 12px;font-weight:600;list-style:none;
+    display:flex;justify-content:space-between;gap:10px;align-items:center}
+  details > summary::-webkit-details-marker{display:none}
+  details > summary:hover{background:#f8fafc}
+  details[open] > summary{border-bottom:1px solid var(--line)}
+  .doc{white-space:pre-wrap;padding:12px;font-size:13px;color:var(--ink-2);line-height:1.7;
+    background:#fcfdfe}
+  .kv{display:grid;grid-template-columns:96px minmax(0,1fr);gap:6px 14px;font-size:13px}
+  .kv dt{color:var(--ink-3)} .kv dd{margin:0}
+  .empty{border:1px dashed var(--line-2);border-radius:var(--r);padding:22px;text-align:center;
+    color:var(--ink-3);font-size:13px}
+  .empty .btn{margin-top:10px}
+  .toasts{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:8px;
+    z-index:40;max-width:min(560px,calc(100vw - 36px))}
+  .toast{background:#fff;border:1px solid var(--line-2);border-left:3px solid var(--accent);
+    border-radius:var(--r-sm);box-shadow:0 6px 18px rgba(16,24,40,.12);padding:10px 14px;
+    font-size:13px;white-space:pre-wrap}
+  .toast.ok{border-left-color:var(--ok)} .toast.err{border-left-color:var(--bad)}
+  @media (max-width:960px){
+    .app{grid-template-columns:1fr}
+    .side{position:static;height:auto;flex-direction:row;align-items:center;gap:10px;
+      padding:10px 12px;border-right:0;border-bottom:1px solid var(--line);overflow-x:auto}
+    .brand{flex:0 0 auto} .brand-sub{display:none}
+    .nav{flex-direction:row;gap:4px} .nav .n{display:none}
+    .side-foot{display:none}
+    .content{padding:14px 14px 60px}
+  }
+  @media (max-width:760px){
+    .topbar{padding:10px 14px;gap:6px 14px}
+    table thead{display:none}
+    tbody tr{display:block;border:1px solid var(--line);border-radius:var(--r-sm);
+      margin-bottom:8px;padding:6px 10px}
+    tbody tr td{display:flex;justify-content:space-between;gap:12px;border:0;padding:5px 0}
+    tbody tr td::before{content:attr(data-label);color:var(--ink-3);font-size:12px;flex:0 0 auto}
+    tr.clickable:hover td{background:transparent}
+    .kv{grid-template-columns:80px minmax(0,1fr)}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <div class="brand-title">AI 求职管理面板</div>
+      <div class="brand-sub">岗位 · 匹配 · 简历 · 记录</div>
+    </div>
+    <nav class="nav" id="nav"></nav>
+    <div class="side-foot" id="side-foot"></div>
+  </aside>
+  <div class="main">
+    <header class="topbar" id="topbar"></header>
+    <main class="content" id="view"></main>
+  </div>
+</div>
+<div class="toasts" id="toasts"></div>
+<script>
+const TABS = [
+  ["jobs","岗位库"],["materials","求职材料"],["resumes","简历"],
+  ["apps","应聘记录"],["tools","工具目录"],["evidence","能力证据"],["runs","定时与记录"]
+];
+const STATUS_LABEL = {to_apply:"待投递",applied:"已投递",chatting:"沟通中",interview:"面试中",
+  offer:"已录用",rejected:"已拒绝",dropped:"已放弃"};
+const KIND_LABEL = {self_intro:"自我介绍",cover_letter:"求职信",chat:"私信话术",
+  interview:"面试提纲",gap_plan:"缺口与补法"};
+const PLATFORM_LABEL = {tencent:"腾讯招聘", remoteok:"RemoteOK", jobicy:"Jobicy",
+  remotive:"Remotive", hn:"Hacker News", boss:"BOSS 直聘", manual:"手工导入", wechat:"微信沟通",
+  baidu:"百度招聘", eleduck:"电鸭社区", workingnomads:"Working Nomads",
+  himalayas:"Himalayas"};
+const ENGINE_LABEL = {rule:"规则引擎", "llm+rule":"模型+规则", "rule+llm":"规则+模型"};
+const platformText = (p) => PLATFORM_LABEL[p] || p || "";
+const engineText = (e) => ENGINE_LABEL[e] || (String(e || "").startsWith("rule+llm")
+  ? "规则+模型" : (e || ""));
+const GRADE_LABEL = {A:"已验证", B:"部分验证", C:"理论了解", D:"证据不足"};
+const state = {tab:"jobs", view:"list", jobs:[], job:null, materials:[], resumes:[],
+  apps:[], tools:[], toolStats:{}, toolEvents:{}, evidence:null, scheduler:null,
+  audit:[], overview:null, openTools:new Set(),
+  f:{q:"",status:"",min:0}, mat:{q:"",job:"",kind:"",latestOnly:true}, scan:null,
+  ev:{grade:""}, log:{kind:""}};
+const pack = {busy:"", resume:null, materials:false, app:false};
+function copyText(text, label) {
+  const done = () => toast((label || "内容") + "已复制到剪贴板");
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => fallback());
+  } else {
+    fallback();
+  }
+  function fallback() {
+    const el = document.createElement("textarea");
+    el.value = text;
+    el.style.position = "fixed";
+    el.style.opacity = "0";
+    document.body.appendChild(el);
+    el.select();
+    try { document.execCommand("copy"); done(); }
+    catch (err) { toast("复制失败，请手动选中复制", "err"); }
+    el.remove();
+  }
+}
+function toast(text, kind = "ok") {
+  const box = document.getElementById("toasts");
+  const el = document.createElement("div");
+  el.className = "toast " + (kind === "err" ? "err" : "ok");
+  el.textContent = text;
+  box.appendChild(el);
+  setTimeout(() => el.remove(), kind === "err" ? 9000 : 6000);
+}
+async function api(path, options) {
+  try {
+    const res = await fetch(path, options);
+    const data = await res.json().catch(() => ({ok:false, error:"返回不是 JSON"}));
+    if (!res.ok || data.ok === false) {
+      toast(data.error || ("请求失败 " + res.status), "err");
+      return null;
+    }
+    return data;
+  } catch (err) {
+    toast("请求出错：" + err.message, "err");
+    return null;
+  }
+}
+const post = (path, body) => api(path, {method:"POST", headers:{"Content-Type":"application/json"},
+  body: JSON.stringify(body || {})});
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g,
+  (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const tag = (text, cls) => '<span class="tag ' + (cls || "") + '">' + esc(text) + "</span>";
+const dash = '<span class="muted">—</span>';
+const verdictClass = (v) => v === "大概率胜任" ? "ok" : (v === "暂不胜任" ? "bad" : (v ? "warn" : ""));
+const stateClass = (s) => s === "D" ? "ok" : (s === "E" ? "bad" : (s === "A" ? "info" : "warn"));
+const gradeClass = (g) => g === "A" ? "ok" : (g === "B" ? "warn" : "bad");
+function fmtTime(raw) {
+  if (!raw) return "";
+  const text = String(raw);
+  const pad = (n) => String(n).padStart(2, "0");
+  const now = new Date();
+  const ymd = now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate());
+  if (text.startsWith(ymd)) return "今天 " + text.slice(11, 16);
+  const y = new Date(now.getTime() - 86400000);
+  const ymd2 = y.getFullYear() + "-" + pad(y.getMonth() + 1) + "-" + pad(y.getDate());
+  if (text.startsWith(ymd2)) return "昨天 " + text.slice(11, 16);
+  return text.slice(5, 16);
+}
+function counts() {
+  const s = state.overview ? state.overview.stats : {};
+  return {jobs: s.jobs || 0, materials: s.materials || 0, resumes: s.resumes || 0,
+    apps: Object.values(s.applications || {}).reduce((a, b) => a + b, 0),
+    tools: (state.overview && state.overview.tools && state.overview.tools.total) || 0,
+    evidence: state.evidence ? state.evidence.summary.total : 0, runs: 0};
+}
+function renderNav() {
+  const c = counts();
+  document.getElementById("nav").innerHTML = TABS.map(([id, label]) =>
+    '<button data-tab="' + id + '" class="' + (state.tab === id ? "active" : "") + '">' +
+    "<span>" + label + "</span>" + (c[id] ? '<span class="n">' + c[id] + "</span>" : "") +
+    "</button>").join("");
+}
+function renderTopbar() {
+  const o = state.overview || {};
+  const s = o.stats || {};
+  const tools = o.tools || {};
+  const llm = o.llm || {};
+  const sch = o.scheduler || {};
+  const kpi = (label, value, cls) =>
+    '<div class="kpi">' + label + ' <b class="' + (cls || "") + '">' + value + "</b></div>";
+  document.getElementById("topbar").innerHTML = [
+    kpi("岗位", s.jobs || 0), kpi("已分析", s.analyses || 0),
+    kpi("简历", s.resumes || 0), kpi("材料", s.materials || 0),
+    kpi("应聘", Object.values(s.applications || {}).reduce((a, b) => a + b, 0)),
+    kpi("工具可自主调用", (tools.auto_callable || 0) + "/" + (tools.total || 0)),
+    kpi("大模型", llm.available ? "可用" : "不可用", llm.available ? "ok" : "bad"),
+    kpi("定时任务", sch.running ? ("运行中 " + sch.pid) : "未运行"),
+  ].join("");
+  document.getElementById("side-foot").innerHTML =
+    "<div>定时任务：" + (sch.running ? "运行中" : "未运行") + "</div>" +
+    "<div>大模型：" + (llm.available ? "可用" : "不可用") + "</div>";
+}
+function scanCard() {
+  const sources = ((state.overview && state.overview.sources) || [])
+    .filter((s) => s.name !== "manual" && s.name !== "boss");
+  return '<div class="card"><h2>抓岗位</h2>' +
+    '<div class="hint">只用公开接口取数；需要登录的平台会明确报错，不绕过限制。</div>' +
+    '<div class="row">' +
+    '<div class="field" style="flex:1 1 320px"><label for="scan-kw">关键词（逗号分隔）</label>' +
+    '<input id="scan-kw" type="text" placeholder="AI 应用,Agent,大模型"></div>' +
+    '<div class="field" style="flex:1 1 220px"><label for="scan-city">城市（逗号分隔）</label>' +
+    '<input id="scan-city" type="text" placeholder="泉州,厦门,远程"></div>' +
+    '<div class="field" style="flex:0 0 110px"><label for="scan-limit">每源条数</label>' +
+    '<input id="scan-limit" type="number" value="25" min="5" max="60"></div></div>' +
+    '<div class="row" style="margin-top:10px"><div class="field"><label>数据源</label>' +
+    '<div class="tags" id="scan-sources">' + sources.map((s) =>
+      '<label class="check"><input type="checkbox" class="src" value="' + s.name + '" checked> ' +
+      esc(s.label) + "</label>").join("") + "</div></div></div>" +
+    '<div class="row" style="margin-top:12px">' +
+    '<button class="btn primary" id="btn-scan">开始抓取</button>' +
+    '<button class="btn" id="btn-analyze-new">分析新岗位</button>' +
+    '<button class="btn" id="btn-dedupe">跨平台查重</button>' +
+    '<button class="btn" id="btn-report">导出报告</button></div>' +
+    '<div id="scan-result"></div></div>' +
+    '<div class="card"><h2>手工导入 JD</h2>' +
+    '<div class="hint">BOSS、猎聘这些没有公开接口的平台，把 JD 复制进来解析，不抓取、不登录。</div>' +
+    '<textarea id="import-text" placeholder="职位：AI 应用开发工程师&#10;公司：某某科技&#10;城市：泉州&#10;链接：https://...&#10;&#10;岗位职责与要求正文…"></textarea>' +
+    '<div class="row" style="margin-top:10px"><button class="btn" id="btn-import">解析并入库</button></div></div>';
+}
+function jobTable() {
+  const jobs = state.jobs;
+  if (!jobs.length) {
+    return '<div class="card"><h2>岗位库</h2>' +
+      '<div class="empty">还没有岗位。先在上面抓一批，或手工导入一份 JD。</div></div>';
+  }
+  const LIMIT = 120;
+  const shown = jobs.slice(0, LIMIT);
+  const rows = shown.map((j) => {
+    const flags = (j.quality_flags || []).map((f) => tag(f, "warn")).join("");
+    const verdict = j.verdict ? tag(j.verdict, verdictClass(j.verdict))
+      : '<span class="muted small">未分析</span>';
+    return '<tr class="clickable" tabindex="0" data-job="' + j.id + '">' +
+      '<td data-label="岗位"><div class="cell-main">' + esc(j.title) + "</div>" +
+      (j.title_zh ? '<div class="small muted">' + esc(j.title_zh) + "</div>" : "") +
+      '<div class="small muted">' + esc(j.company || "未写公司") + "</div></td>" +
+      '<td data-label="城市">' + esc(j.city || "—") + "</td>" +
+      '<td data-label="来源">' + esc(platformText(j.platform)) + "</td>" +
+      '<td data-label="薪资">' + esc(j.salary_text || "—") + "</td>" +
+      '<td class="num" data-label="匹配分">' + (j.score == null ? "—" : j.score) + "</td>" +
+      '<td data-label="结论">' + verdict + flags + "</td></tr>";
+  }).join("");
+  return '<div class="card"><div class="card-head"><h2>岗位库</h2>' +
+    '<div class="small muted">共 ' + jobs.length + " 条" +
+    (jobs.length > LIMIT ? "（只显示前 " + LIMIT + " 条，用搜索或筛选缩小范围）" : "") + "</div></div>" +
+    '<div class="row tight" style="margin:12px 0">' +
+    '<div class="field" style="flex:1 1 240px"><label for="job-q">搜索</label>' +
+    '<input id="job-q" type="text" value="' + esc(state.f.q) + '" placeholder="标题 / 公司 / 城市"></div>' +
+    '<div class="field"><label for="job-status">状态</label><select id="job-status">' +
+    '<option value="">全部</option><option value="new">新发现</option>' +
+    '<option value="analyzed">已分析</option><option value="applied">已投递</option></select></div>' +
+    '<div class="field" style="flex:0 0 120px"><label for="job-min">最低匹配分</label>' +
+    '<input id="job-min" type="number" value="' + state.f.min + '" min="0" max="100"></div></div>' +
+    '<table><thead><tr><th>岗位 / 公司</th><th>城市</th><th>来源</th><th>薪资</th>' +
+    '<th class="num">匹配分</th><th>结论</th></tr></thead><tbody>' + rows + "</tbody></table></div>";
+}
+function appForm() {
+  const jobId = state.job ? state.job.job.id : "";
+  return '<div class="card" style="margin-top:14px;background:#fbfcfd">' +
+    '<h2>记录应聘状态</h2>' +
+    '<div class="hint">「已投递」及之后的状态需要勾选确认，每次确认都会写进审计记录。</div>' +
+    '<div class="row tight">' +
+    '<div class="field"><label for="app-status">状态</label><select id="app-status">' +
+    Object.entries(STATUS_LABEL).map(([k, v]) => '<option value="' + k + '">' + v + "</option>").join("") +
+    "</select></div>" +
+    '<div class="field" style="flex:1 1 240px"><label for="app-note">备注</label>' +
+    '<input id="app-note" type="text" placeholder="例如：HR 约了技术面"></div>' +
+    '<label class="check"><input type="checkbox" id="app-confirm"> 我确认这是真实动作</label>' +
+    '<button class="btn primary" id="btn-save-app">保存到应聘记录</button>' +
+    '<span class="small muted">岗位 #' + jobId + "</span></div></div>";
+}
+function resumeResult() {
+  if (!pack.resume) return "";
+  const r = pack.resume;
+  const paths = r.paths || {};
+  const links = Object.entries(paths).map(([kind, file]) =>
+    '<a class="btn small" href="/api/file?path=' + encodeURIComponent(file) +
+    '" target="_blank">打开 ' + kind.toUpperCase() + "</a>").join(" ");
+  const issues = (r.issues || []).length
+    ? '<div class="small" style="margin-top:8px">自检发现：' +
+      r.issues.map((i) => tag(i.severity === "high" ? "高" : "中", i.severity === "high" ? "bad" : "warn") +
+        esc(i.detail)).join("<br>") + "</div>"
+    : '<div class="small muted" style="margin-top:8px">自检没有发现问题。</div>';
+  return '<div class="card" style="margin-top:14px;background:#fbfcfd">' +
+    '<div class="card-head"><h2>定制简历已生成</h2>' +
+    '<span class="small muted">方向 ' + esc(r.direction) + " · 自检 " + r.score +
+    ((r.layout && r.layout.pages) ? " · " + r.layout.pages + " 页" : "") + "</span></div>" +
+    '<div class="row tight" style="margin-top:10px">' + links + "</div>" +
+    ((r.fixes && r.fixes.length) ? '<div class="small muted" style="margin-top:8px">自动修正：' +
+      esc(r.fixes.join("；")) + "</div>" : "") + issues + "</div>";
+}
+function jobDetail() {
+  const j = state.job;
+  if (!j) return '<div class="empty">岗位不存在。</div>';
+  const a = j.analysis;
+  const list = (items) => items && items.length
+    ? '<ul style="margin:6px 0 0 18px;padding:0">' + items.map((x) => "<li>" + esc(x) + "</li>").join("") + "</ul>"
+    : '<span class="muted">无</span>';
+  const req = ((a && a.requirements) || []).map((r) =>
+    "<tr><td data-label='要求'>" + esc(r.text) + "</td><td data-label='能力'>" +
+    esc(r.capability || "—") + "</td><td data-label='等级'>" + tag(r.grade, gradeClass(r.grade)) +
+    "</td><td data-label='结论'>" + esc(r.verdict) + "</td></tr>").join("");
+  return '<div class="card"><div class="card-head">' +
+    "<div><h2>" + esc(j.job.title_zh || j.job.title) + "</h2>" +
+    (j.job.title_zh ? '<div class="small muted">原文标题：' + esc(j.job.title) + "</div>" : "") +
+    '<div class="small muted">' + esc(j.job.company || "") + " ｜ " + esc(j.job.city || "") +
+    " ｜ " + esc(platformText(j.job.platform)) +
+    (j.job.description_zh ? ' ｜ <span class="tag info">机翻中文</span>' : "") + "</div></div>" +
+    '<button class="btn" data-jump="back">返回列表</button></div>' +
+    '<dl class="kv" style="margin-top:14px">' +
+    "<dt>薪资</dt><dd>" + esc(j.job.salary_text || "未公开") + "</dd>" +
+    "<dt>经验 / 学历</dt><dd>" + esc(j.job.experience || "—") + " / " + esc(j.job.education || "—") + "</dd>" +
+    "<dt>有效性</dt><dd>" + (j.job.valid === 0 ? tag("无效或存疑", "bad")
+      : (j.job.valid === 1 ? tag("通过初检", "ok") : "未判定")) +
+    (j.job.validity_note ? ' <span class="small muted">' + esc(j.job.validity_note) + "</span>" : "") + "</dd>" +
+    "<dt>抓取时间</dt><dd>" + esc(j.job.first_seen || "") + "</dd>" +
+    "<dt>原始链接</dt><dd>" + (j.job.url
+      ? '<a href="' + esc(j.job.url) + '" target="_blank" rel="noreferrer">打开</a>' : dash) + "</dd></dl>" +
+    (a ? '<div style="margin-top:16px"><h2>匹配结论：' + esc(a.verdict) +
+      ' <span class="muted small">' + a.fit_score + " 分 · 引擎 " + esc(engineText(a.engine)) +
+      "</span></h2></div>" +
+      '<div class="grid-2" style="margin-top:10px">' +
+      '<div><div class="small muted">优势</div>' + list(a.strengths) + "</div>" +
+      '<div><div class="small muted">风险</div>' + list(a.risks) + "</div>" +
+      '<div><div class="small muted">缺口</div>' + list(a.gaps) + "</div>" +
+      '<div><div class="small muted">要先问清楚</div>' + list(a.questions) + "</div></div>" +
+      '<div style="margin-top:16px"><div class="small muted">要求逐条对照</div>' +
+      '<table style="margin-top:6px"><thead><tr><th>要求</th><th>对应能力</th><th>等级</th><th>结论</th></tr></thead>' +
+      "<tbody>" + (req || '<tr><td colspan="4" class="muted">没拆出要求项</td></tr>') + "</tbody></table></div>"
+      : '<div class="empty" style="margin-top:16px">还没有分析这个岗位。</div>') +
+    '<div class="row" style="margin-top:16px">' +
+    '<button class="btn" data-act="analyze-one">重新分析</button>' +
+    '<button class="btn primary" data-act="pack">一键生成求职包</button>' +
+    '<button class="btn" data-act="make-materials">只生成材料</button>' +
+    '<button class="btn" data-act="make-resume">只生成简历</button>' +
+    '<button class="btn" data-act="toggle-app">记录应聘状态</button>' +
+    '<button class="btn" data-act="translate">翻成中文</button>' +
+    '<span class="small muted">' + (pack.busy ? esc(pack.busy) : "求职包 = 求职材料 + 定制简历，生成后就地显示") + "</span></div>" +
+    (j.job.description_zh ? '<div style="margin-top:14px">' +
+      '<div class="small muted">JD 正文（模型翻译，原文保留在库里）</div>' +
+      '<div class="doc">' + esc(j.job.description_zh) + "</div>" +
+      "<details style='margin-top:8px'><summary>查看英文原文</summary><div class='doc'>" +
+      esc(j.job.description || "") + "</div></details></div>"
+      : '<div style="margin-top:16px"><div class="small muted">JD 正文</div>' +
+        '<div class="doc">' + esc(j.job.description || "（没有正文，建议手工导入完整 JD）") + "</div></div>") +
+    (pack.app ? appForm() : "") +
+    resumeResult() +
+    ((j.materials && j.materials.length)
+      ? '<div style="margin-top:16px"><div class="card-head"><div class="small muted">已生成材料（本岗位）</div>' +
+        '<button class="btn small" data-copy-all>复制全部私信话术</button></div>' +
+        j.materials.map((m) => "<details><summary>" + esc(m.title || KIND_LABEL[m.kind] || m.kind) +
+          '<span class="small muted">' + esc(m.engine || "") + " · " + fmtTime(m.created_at) +
+          "</span></summary>" +
+          '<div style="padding:0 12px 8px"><button class="btn small" data-copy="' + m.id + '">复制这段</button></div>' +
+          "<div class='doc'>" + esc(m.text) + "</div></details>").join("") + "</div>"
+      : "") + "</div>";
+}
+function materialsView() {
+  const jobs = state.jobs;
+  const jobName = (id) => {
+    const j = jobs.find((x) => x.id === id);
+    return j ? j.title + "｜" + (j.company || "") : "岗位 #" + id;
+  };
+  const q = state.mat.q.toLowerCase();
+  const list = state.materials.filter((m) =>
+    (!state.mat.kind || m.kind === state.mat.kind) &&
+    (!state.mat.job || String(m.job_id) === String(state.mat.job)) &&
+    (!q || (m.text + m.title).toLowerCase().includes(q)));
+  // 每次生成都会追加一批，默认只展示每个岗位最新那一批，历史仍留在库里
+  const newest = new Map();
+  list.forEach((m) => {
+    const key = m.job_id || 0;
+    if (!newest.has(key) || m.created_at > newest.get(key)) newest.set(key, m.created_at);
+  });
+  const visible = state.mat.latestOnly
+    ? list.filter((m) => m.created_at === newest.get(m.job_id || 0))
+    : list;
+  const groups = new Map();
+  visible.forEach((m) => {
+    const key = m.job_id || 0;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(m);
+  });
+  const body = groups.size ? [...groups.entries()].map(([jobId, items]) => {
+    const byKind = new Map();
+    items.forEach((m) => {
+      if (!byKind.has(m.kind)) byKind.set(m.kind, []);
+      byKind.get(m.kind).push(m);
+    });
+    return "<details open><summary>" + esc(jobName(jobId)) +
+      '<span class="small muted">' + items.length + " 条材料</span></summary>" +
+      [...byKind.entries()].map(([kind, docs]) =>
+        '<div style="padding:10px 12px 2px"><div class="small muted" style="margin-bottom:6px">' +
+        esc(KIND_LABEL[kind] || kind) + "（" + docs.length + "）</div>" +
+        docs.map((m) => "<details><summary>" + esc(m.title || KIND_LABEL[m.kind] || m.kind) +
+          '<span class="small muted">' + esc(m.engine || "") + " · " + fmtTime(m.created_at) +
+          "</span></summary><div class='doc'>" + esc(m.text) + "</div></details>").join("") +
+        "</div>").join("") + "</details>";
+  }).join("") : '<div class="empty">没有符合条件的材料。</div>';
+  const summary = state.mat.latestOnly
+    ? "当前显示每个岗位最新一批（共 " + visible.length + " 条，库里共 " + state.materials.length + " 条）"
+    : "显示全部 " + visible.length + " 条";
+  return '<div class="card"><h2>生成求职材料</h2>' +
+    '<div class="hint">按岗位生成自我介绍、求职信、私信话术、面试提纲和缺口补法。</div>' +
+    '<div class="row"><div class="field" style="flex:1 1 320px"><label for="mat-job">选择岗位</label>' +
+    '<select id="mat-job"><option value="">（选择要投的岗位）</option>' + jobs.map((j) =>
+      '<option value="' + j.id + '">#' + j.id + " " + esc(j.title) + "｜" + esc(j.company || "") +
+      "</option>").join("") + "</select></div>" +
+    '<label class="check"><input type="checkbox" id="mat-llm"> 用大模型润色</label>' +
+    '<button class="btn primary" id="btn-gen-mat">生成材料</button></div></div>' +
+    '<div class="card"><div class="card-head"><h2>已生成（' + state.materials.length + "）</h2></div>" +
+    '<div class="row tight" style="margin:12px 0">' +
+    '<div class="field" style="flex:1 1 220px"><label for="mat-q">搜索内容</label>' +
+    '<input id="mat-q" type="text" value="' + esc(state.mat.q) + '" placeholder="搜材料正文"></div>' +
+    '<div class="field"><label for="mat-kind">类型</label><select id="mat-kind">' +
+    '<option value="">全部</option>' + Object.entries(KIND_LABEL).map(([k, v]) =>
+      '<option value="' + k + '"' + (state.mat.kind === k ? " selected" : "") + ">" + v + "</option>").join("") +
+    "</select></div>" +
+    '<div class="field" style="flex:1 1 220px"><label for="mat-filter-job">岗位</label>' +
+    '<select id="mat-filter-job"><option value="">全部</option>' + jobs.map((j) =>
+      '<option value="' + j.id + '"' + (String(state.mat.job) === String(j.id) ? " selected" : "") +
+      ">#" + j.id + " " + esc(j.title) + "</option>").join("") + "</select></div>" +
+    '<label class="check"><input type="checkbox" id="mat-latest"' +
+    (state.mat.latestOnly ? " checked" : "") + "> 只看最新一批</label>" +
+    '<span class="small muted">' + summary + "</span></div>" +
+    body + "</div>";
+}
+function resumesView() {
+  const jobs = state.jobs;
+  const list = state.resumes.length ? state.resumes.map((r) => {
+    const issues = (r.issues || []).map((i) =>
+      "<li>" + tag(i.severity === "high" ? "高" : (i.severity === "medium" ? "中" : "低"),
+        i.severity === "high" ? "bad" : "warn") + " " + esc(i.detail) + "</li>").join("");
+    return "<details><summary>" + esc(r.direction) + " · " + esc(r.variant) +
+      (r.job_id ? " · 岗位 #" + r.job_id : "") +
+      '<span class="small muted">自检 ' + (r.score == null ? "—" : r.score) + " · " +
+      fmtTime(r.created_at) + "</span></summary>" +
+      '<div class="doc">' +
+      (r.pdf_path ? '<a href="/api/file?path=' + encodeURIComponent(r.pdf_path) + '" target="_blank">PDF</a>　' : "") +
+      (r.docx_path ? '<a href="/api/file?path=' + encodeURIComponent(r.docx_path) + '" target="_blank">Word</a>　' : "") +
+      (r.md_path ? '<a href="/api/file?path=' + encodeURIComponent(r.md_path) + '" target="_blank">Markdown</a>' : "") +
+      (r.layout && r.layout.pages ? "\n页数：" + r.layout.pages : "") +
+      ((r.fixes && r.fixes.length) ? "\n自动修正：" + esc(r.fixes.join("；")) : "") +
+      (issues ? "\n自检问题：\n" + (r.issues || []).map((i) => "· " + i.detail).join("\n") : "") +
+      "</div></details>";
+  }).join("") : '<div class="empty">还没有生成简历。选一个方向或岗位，先生成一版看看。</div>';
+  return '<div class="card"><h2>生成简历</h2>' +
+    '<div class="hint">从主简历事实源按方向裁剪，出 Word / PDF / Markdown，并自动查事实与排版。</div>' +
+    '<div class="row">' +
+    '<div class="field" style="flex:1 1 260px"><label for="res-dir">按方向</label><select id="res-dir">' +
+    "<option>AI 应用开发</option><option>AI Agent 应用</option>" +
+    "<option>AI 客服解决方案</option><option>AI 自动化与业务流程</option></select></div>" +
+    '<div class="field" style="flex:1 1 300px"><label for="res-job">或按岗位定制</label>' +
+    '<select id="res-job"><option value="">（不指定）</option>' + jobs.map((j) =>
+      '<option value="' + j.id + '">#' + j.id + " " + esc(j.title) + "｜" + esc(j.company || "") +
+      "</option>").join("") + "</select></div>" +
+    '<button class="btn primary" id="btn-gen-resume">生成简历</button>' +
+    '<button class="btn" id="btn-refresh-resume">刷新</button></div>' +
+    '<div id="resume-result"></div></div>' +
+    '<div class="card"><div class="card-head"><h2>已生成（' + state.resumes.length + "）</h2></div>" +
+    '<div style="margin-top:12px">' + list + "</div></div>";
+}
+function appsView() {
+  const jobs = state.jobs.filter((j) => j.fit_score != null || j.status !== "new");
+  const rows = state.apps.map((a) => {
+    const chain = (a.events || []).map((e) => STATUS_LABEL[e.status] || e.status).join(" → ");
+    return "<tr><td data-label='岗位'><div class='cell-main'>" + esc(a.title) + "</div>" +
+      '<div class="small muted">' + esc(a.company || "") + " · #" + a.job_id + "</div></td>" +
+      "<td data-label='状态'>" + tag(STATUS_LABEL[a.status] || a.status,
+        a.status === "offer" ? "ok" : (a.status === "rejected" ? "bad" : "info")) + "</td>" +
+      "<td data-label='渠道'>" + esc(a.channel || "—") + "</td>" +
+      "<td data-label='简历'>" + (a.resume_pdf
+        ? '<a href="/api/file?path=' + encodeURIComponent(a.resume_pdf) + '" target="_blank">PDF</a>'
+        : dash) + "</td>" +
+      "<td data-label='更新'>" + fmtTime(a.updated_at) + "</td>" +
+      "<td data-label='进度' class='small muted'>" + esc(chain) + "</td></tr>";
+  }).join("");
+  return '<div class="card"><h2>更新应聘状态</h2>' +
+    '<div class="hint">「已投递」及之后的状态需要勾选确认，每次确认都会写进审计记录。</div>' +
+    '<div class="row"><div class="field" style="flex:1 1 320px"><label for="app-job">岗位</label>' +
+    '<select id="app-job"><option value="">（选择岗位）</option>' + jobs.map((j) =>
+      '<option value="' + j.id + '">#' + j.id + " " + esc(j.title) + "</option>").join("") +
+    "</select></div>" +
+    '<div class="field"><label for="app-status">状态</label><select id="app-status">' +
+    Object.entries(STATUS_LABEL).map(([k, v]) => '<option value="' + k + '">' + v + "</option>").join("") +
+    "</select></div>" +
+    '<div class="field" style="flex:1 1 240px"><label for="app-note">备注</label>' +
+    '<input id="app-note" type="text" placeholder="可选"></div>' +
+    '<label class="check"><input type="checkbox" id="app-confirm"> 我确认这是真实动作</label>' +
+    '<button class="btn primary" id="btn-save-app">保存</button></div></div>' +
+    '<div class="card"><div class="card-head"><h2>记录（' + state.apps.length + "）</h2></div>" +
+    (state.apps.length ? '<table style="margin-top:12px"><thead><tr><th>岗位</th><th>状态</th>' +
+      "<th>渠道</th><th>简历</th><th>更新</th><th>进度</th></tr></thead><tbody>" + rows + "</tbody></table>"
+      : '<div class="empty">还没有应聘记录。把某个岗位状态改成「已投递」就会出现在这里。</div>') +
+    "</div>";
+}
+function toolsView() {
+  const stats = state.toolStats || {};
+  const rows = state.tools.map((t) => {
+    const open = state.openTools.has(t.name);
+    const events = state.toolEvents[t.name];
+    const latest = ((t.notes || "").split("\n").filter(Boolean).pop() || "").slice(0, 60);
+    const detail = open ? '<tr><td colspan="6" style="background:#fbfcfd">' +
+      '<div class="small muted">运行环境：' + esc(t.runtime || "—") + "</div>" +
+      '<div class="small muted">调用入口：' + esc(t.entry || "—") + "</div>" +
+      '<div class="small muted">权限：' + esc(t.permissions || "—") + "</div>" +
+      '<div class="small muted">失败处理：' + esc(t.failure_policy || "—") + "</div>" +
+      (t.risk ? '<div class="small muted">风险：' + esc(t.risk) + "</div>" : "") +
+      '<div class="small muted" style="margin-top:6px">验证与调用记录</div>' +
+      '<div class="doc">' + esc((events || []).length
+        ? events.map((e) => fmtTime(e.created_at) + "  " + e.kind + "  " +
+            (e.ok === 1 ? "成功" : (e.ok === 0 ? "失败" : "")) + "  " + (e.detail || "")).join("\n")
+        : "（本机没有记录，点“验证单个”可以跑一次冒烟测试）") + "</div></td></tr>" : "";
+    return '<tr class="clickable" data-tool="' + esc(t.name) + '">' +
+      "<td data-label='工具'><div class='cell-main'>" + esc(t.name) + "</div>" +
+      (t.repo_url ? '<div class="small"><a href="' + esc(t.repo_url) +
+        '" target="_blank" rel="noreferrer">仓库</a></div>' : "") +
+      '<div class="small muted">' + esc((t.purpose || "").slice(0, 42)) + "</div></td>" +
+      "<td data-label='状态'>" + tag(t.state + " " + t.state_label, stateClass(t.state)) + "</td>" +
+      "<td data-label='类型'>" + esc(t.kind || "") + "</td>" +
+      "<td data-label='许可证'>" + esc(t.license || "—") + "</td>" +
+      "<td data-label='自主调用'>" + (t.auto_call && t.state === "D" ? tag("允许", "ok")
+        : tag("禁止", "warn")) + "</td>" +
+      "<td data-label='最新结论' class='small muted'>" + esc(latest) + "</td></tr>" + detail;
+  }).join("");
+  return '<div class="card"><h2>工具目录</h2>' +
+    '<div class="hint">发现 → 评估 → 安装 → 验证 → 调用；只有验证通过且允许自动调用的工具会被系统自己用。</div>' +
+    '<div class="row tight"><button class="btn primary" id="btn-verify-all">全部重新验证</button>' +
+    '<div class="field" style="flex:1 1 220px"><label for="tool-name">仓库（owner/repo）</label>' +
+    '<input id="tool-name" type="text" placeholder="例如 rapidfuzz/RapidFuzz"></div>' +
+    '<button class="btn" id="btn-verify-one">验证单个</button>' +
+    '<button class="btn" id="btn-evaluate">深度评估</button></div>' +
+    '<div class="row tight" style="margin-top:10px">' +
+    '<div class="field" style="flex:1 1 340px"><label for="tool-query">GitHub 检索式</label>' +
+    '<input id="tool-query" type="text" placeholder="例如 mcp server language:Python stars:>100"></div>' +
+    '<button class="btn" id="btn-discover">发现候选</button></div>' +
+    '<div id="tool-result"></div></div>' +
+    '<div class="card"><div class="card-head"><h2>目录与状态（' + (stats.total || 0) + "）</h2>" +
+    '<div class="tags">' + ["A", "B", "C", "D", "E"].map((s) =>
+      tag(s + " " + (stats[s] || 0), stateClass(s))).join("") + "</div></div>" +
+    '<table style="margin-top:12px"><thead><tr><th>工具</th><th>状态</th><th>类型</th>' +
+    "<th>许可证</th><th>自主调用</th><th>最新结论</th></tr></thead><tbody>" + rows + "</tbody></table></div>";
+}
+function evidenceView() {
+  const rep = state.evidence;
+  if (!rep) return '<div class="empty">还没有核查结果，点下面的按钮跑一次。</div>';
+  const claims = rep.claims.filter((c) => !state.ev.grade || c.verified_grade === state.ev.grade);
+  const rows = claims.map((c) => {
+    const checks = c.checks.map((k) => (k.ok ? "✔ " : "✘ ") + k.kind + "：" + k.value).join("\n");
+    return "<tr><td data-label='项目'>" + esc(c.project) + "</td>" +
+      "<td data-label='断言'>" + esc(c.claim) + "</td>" +
+      "<td data-label='自评'>" + tag(c.declared_grade, "warn") + "</td>" +
+      "<td data-label='核查后'>" + tag(c.verified_grade, gradeClass(c.verified_grade)) + "</td>" +
+      "<td data-label='可写进简历'>" + (c.resume_usable && ["A", "B"].includes(c.verified_grade)
+        ? tag("可以", "ok") : tag("不可以", "warn")) + "</td>" +
+      "<td data-label='证据' class='small muted' style='white-space:pre-wrap'>" + esc(checks) + "</td></tr>";
+  }).join("");
+  const s = rep.summary;
+  return '<div class="card"><div class="card-head"><h2>能力证据核查</h2>' +
+    '<button class="btn" id="btn-evidence">重新核查</button></div>' +
+    '<div class="hint">A 已验证 · B 部分验证 · C 理论了解 · D 证据不足。核查只在本机跑脚本和查文件，不联网验证你的经历。</div>' +
+    '<div class="row tight"><div class="tags">' + ["", "A", "B", "C", "D"].map((g) =>
+      '<button class="btn small' + (state.ev.grade === g ? " primary" : "") + '" data-grade="' + g + '">' +
+      (g ? g + "（" + (s.by_grade[g] || 0) + "）" : "全部（" + s.total + "）") + "</button>").join("") +
+    '</div><div class="small muted">可写进简历 ' + s.resume_usable + " 条 · 核查时间 " +
+    esc(rep.generated_at) + "</div></div></div>" +
+    '<div class="card"><table><thead><tr><th>项目</th><th>断言</th><th>自评</th><th>核查后</th>' +
+    "<th>可写进简历</th><th>证据</th></tr></thead><tbody>" + rows + "</tbody></table></div>";
+}
+function runsView() {
+  const sch = state.scheduler ? state.scheduler.status : {};
+  const logs = state.scheduler ? state.scheduler.logs : [];
+  const events = state.audit.filter((e) => !state.log.kind || e.kind === state.log.kind);
+  const kinds = [...new Set(state.audit.map((e) => e.kind))];
+  return '<div class="card"><h2>定时检索</h2>' +
+    '<div class="hint">定时只做只读取数与分析，不会发送任何消息。状态按真实进程判断。</div>' +
+    '<div class="row tight"><div class="field" style="flex:0 0 120px">' +
+    '<label for="sched-interval">间隔（分钟）</label>' +
+    '<input id="sched-interval" type="number" value="' + (sch.interval_minutes || 180) + '" min="5"></div>' +
+    '<button class="btn primary" data-sched="start">启动</button>' +
+    '<button class="btn" data-sched="stop">停止</button>' +
+    '<button class="btn" data-sched="status">看状态</button>' +
+    '<button class="btn" data-sched="run">立即跑一轮</button>' +
+    '<span class="small muted">' + (sch.running ? tag("运行中 PID " + sch.pid, "ok")
+      : tag("未运行", "warn")) + " 最近一轮：" + esc(sch.last_run || "无") + "</span></div>" +
+    '<div class="doc" style="margin-top:12px">' + esc(logs.join("\n") || "（还没有日志）") + "</div></div>" +
+    '<div class="card"><div class="card-head"><h2>运行记录</h2><div class="tags">' +
+    '<button class="btn small' + (state.log.kind ? "" : " primary") + '" data-log="">全部</button>' +
+    kinds.map((k) => '<button class="btn small' + (state.log.kind === k ? " primary" : "") +
+      '" data-log="' + esc(k) + '">' + esc(k) + "</button>").join("") + "</div></div>" +
+    (events.length ? '<table style="margin-top:12px"><thead><tr><th>时间</th><th>类型</th>' +
+      "<th>对象</th><th>说明</th></tr></thead><tbody>" + events.map((e) =>
+        "<tr><td class='nowrap' data-label='时间'>" + fmtTime(e.created_at) + "</td>" +
+        "<td data-label='类型'>" + tag(e.kind, e.kind === "blocked" ? "warn"
+          : (e.kind === "confirmed" ? "ok" : "")) + "</td>" +
+        "<td data-label='对象' class='small'>" + esc((e.subject || "").slice(0, 40)) + "</td>" +
+        "<td data-label='说明' class='small muted'>" + esc((e.detail || "").slice(0, 140)) + "</td></tr>").join("") +
+      "</tbody></table>" : '<div class="empty">没有这一类记录。</div>') + "</div>";
+}
+function render() {
+  renderNav();
+  renderTopbar();
+  const view = document.getElementById("view");
+  if (state.tab === "jobs") view.innerHTML = state.view === "detail" ? jobDetail() : scanCard() + jobTable();
+  else if (state.tab === "materials") view.innerHTML = materialsView();
+  else if (state.tab === "resumes") view.innerHTML = resumesView();
+  else if (state.tab === "apps") view.innerHTML = appsView();
+  else if (state.tab === "tools") view.innerHTML = toolsView();
+  else if (state.tab === "evidence") view.innerHTML = evidenceView();
+  else view.innerHTML = runsView();
+  bind();
+}
+function bind() {
+  const q = (sel) => document.querySelector(sel);
+  if (state.tab === "jobs" && state.view === "list") {
+    if (q("#btn-scan")) q("#btn-scan").onclick = doScan;
+    if (q("#btn-analyze-new")) q("#btn-analyze-new").onclick = () => doAnalyze(20);
+    if (q("#btn-dedupe")) q("#btn-dedupe").onclick = doDedupe;
+    if (q("#btn-report")) q("#btn-report").onclick = doReport;
+    if (q("#btn-import")) q("#btn-import").onclick = doImport;
+    if (q("#job-q")) q("#job-q").oninput = (e) => { state.f.q = e.target.value; loadJobs(); };
+    if (q("#job-status")) q("#job-status").onchange = (e) => { state.f.status = e.target.value; loadJobs(); };
+    if (q("#job-min")) q("#job-min").oninput = (e) => { state.f.min = Number(e.target.value || 0); loadJobs(); };
+  }
+  if (state.tab === "jobs" && state.view === "detail") {
+    document.querySelectorAll("[data-act]").forEach((btn) => btn.onclick = () => jobAction(btn.dataset.act));
+    document.querySelectorAll("[data-jump]").forEach((btn) => btn.onclick = () => {
+      state.view = "list"; render();
+    });
+    document.querySelectorAll("[data-copy]").forEach((btn) => btn.onclick = (event) => {
+      event.preventDefault();
+      const row = (state.job.materials || []).find((m) => String(m.id) === String(btn.dataset.copy));
+      if (row) { copyText(row.text, row.title || "材料"); event.stopPropagation(); }
+    });
+    const copyAll = document.querySelector("[data-copy-all]");
+    if (copyAll) copyAll.onclick = () => {
+      const text = (state.job.materials || []).filter((m) => m.kind === "chat")
+        .map((m) => "【" + (m.title || "话术") + "】\n" + m.text).join("\n\n");
+      if (text) copyText(text, "私信话术");
+      else toast("这个岗位还没有私信话术", "err");
+    };
+    if (document.querySelector("#btn-save-app")) {
+      document.querySelector("#btn-save-app").onclick = saveAppFor(state.job.job.id);
+    }
+  }
+  if (state.tab === "materials") {
+    if (q("#btn-gen-mat")) q("#btn-gen-mat").onclick = genMaterials;
+    if (q("#mat-q")) q("#mat-q").oninput = (e) => { state.mat.q = e.target.value; render(); };
+    if (q("#mat-kind")) q("#mat-kind").onchange = (e) => { state.mat.kind = e.target.value; render(); };
+    if (q("#mat-filter-job")) q("#mat-filter-job").onchange = (e) => {
+      state.mat.job = e.target.value; render();
+    };
+    if (q("#mat-latest")) q("#mat-latest").onchange = (e) => {
+      state.mat.latestOnly = e.target.checked; render();
+    };
+  }
+  if (state.tab === "resumes") {
+    if (q("#btn-gen-resume")) q("#btn-gen-resume").onclick = genResume;
+    if (q("#btn-refresh-resume")) q("#btn-refresh-resume").onclick = loadResumes;
+  }
+  if (state.tab === "apps" && q("#btn-save-app")) q("#btn-save-app").onclick = saveApp;
+  if (state.tab === "tools") {
+    if (q("#btn-verify-all")) q("#btn-verify-all").onclick = () => verifyTools(true);
+    if (q("#btn-verify-one")) q("#btn-verify-one").onclick = () => verifyTools(false);
+    if (q("#btn-evaluate")) q("#btn-evaluate").onclick = evaluateTool;
+    if (q("#btn-discover")) q("#btn-discover").onclick = discoverTools;
+  }
+  if (state.tab === "evidence" && q("#btn-evidence")) q("#btn-evidence").onclick = loadEvidence;
+  if (state.tab === "runs") document.querySelectorAll("[data-sched]").forEach((btn) => {
+    btn.onclick = () => sched(btn.dataset.sched);
+  });
+  document.querySelectorAll("tr[data-job]").forEach((row) => {
+    const open = () => openJob(Number(row.dataset.job));
+    row.onclick = open;
+    row.onkeydown = (e) => { if (e.key === "Enter") open(); };
+  });
+  document.querySelectorAll("tr[data-tool]").forEach((row) => {
+    row.onclick = () => toggleTool(row.dataset.tool);
+  });
+  document.querySelectorAll("[data-grade]").forEach((btn) => {
+    btn.onclick = () => { state.ev.grade = btn.dataset.grade; render(); };
+  });
+  document.querySelectorAll("[data-log]").forEach((btn) => {
+    btn.onclick = () => { state.log.kind = btn.dataset.log; render(); };
+  });
+}
+async function loadOverview() {
+  const data = await api("/api/overview");
+  if (!data) return;
+  state.overview = data;
+  const kw = document.getElementById("scan-kw");
+  if (kw) kw.value = (data.config.keywords || []).join(",");
+  const city = document.getElementById("scan-city");
+  if (city) city.value = (data.config.cities || []).join(",");
+  render();
+}
+async function loadJobs() {
+  const params = new URLSearchParams({q: state.f.q || "", min_score: state.f.min || 0});
+  if (state.f.status) params.set("status", state.f.status);
+  const data = await api("/api/jobs?" + params.toString());
+  if (!data) return;
+  state.jobs = data.jobs;
+  render();
+}
+async function openJob(id) {
+  const data = await api("/api/job/" + id);
+  if (!data) return;
+  if (!state.job || state.job.job.id !== id) {
+    pack.resume = null;
+    pack.app = false;
+    pack.busy = "";
+  }
+  state.job = data;
+  state.view = "detail";
+  render();
+  window.scrollTo({top:0});
+}
+async function loadMaterials() {
+  const data = await api("/api/materials");
+  if (data) { state.materials = data.materials; render(); }
+}
+async function loadResumes() {
+  const data = await api("/api/resumes");
+  if (data) { state.resumes = data.resumes; render(); }
+}
+async function loadApps() {
+  const data = await api("/api/applications");
+  if (data) { state.apps = data.applications; render(); }
+}
+async function loadTools() {
+  const data = await api("/api/tools");
+  if (data) { state.tools = data.tools; state.toolStats = data.stats; render(); }
+}
+async function loadEvidence() {
+  const data = await api("/api/evidence");
+  if (data) { state.evidence = data.report; render(); }
+}
+async function loadRuns() {
+  const [sch, audit] = await Promise.all([api("/api/scheduler"), api("/api/events")]);
+  if (sch) state.scheduler = sch;
+  if (audit) state.audit = audit.events;
+  render();
+}
+async function toggleTool(name) {
+  if (state.openTools.has(name)) {
+    state.openTools.delete(name);
+  } else {
+    state.openTools.add(name);
+    if (!state.toolEvents[name]) {
+      const data = await api("/api/tool/events?name=" + encodeURIComponent(name));
+      if (data) state.toolEvents[name] = data.events;
+    }
+  }
+  render();
+}
+async function doScan() {
+  const keywords = (document.getElementById("scan-kw").value || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const cities = (document.getElementById("scan-city").value || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const limit = Number(document.getElementById("scan-limit").value || 25);
+  const sources = [...document.querySelectorAll(".src:checked")].map((c) => c.value);
+  const btn = document.getElementById("btn-scan");
+  btn.disabled = true;
+  btn.textContent = "抓取中…";
+  const data = await post("/api/scan", {keywords, cities, limit, sources});
+  btn.disabled = false;
+  btn.textContent = "开始抓取";
+  if (!data) return;
+  const box = document.getElementById("scan-result");
+  box.innerHTML = '<div class="doc" style="margin-top:12px">' + esc(
+    data.report.sources.map((s) => s.label + "：" + (s.error ? ("失败 " + s.error)
+      : ("取到 " + s.fetched + " 条，新增 " + s.new + "，更新 " + s.updated))).join("\n") +
+    "\n合计：新增 " + data.report.totals.new + "，更新 " + data.report.totals.updated +
+    "，可疑标记 " + data.report.totals.flagged + "，失败源 " + data.report.totals.failed_sources) + "</div>";
+  toast("抓取完成：新增 " + data.report.totals.new + " 条");
+  loadJobs();
+  loadOverview();
+}
+async function doAnalyze(limit) {
+  const data = await post("/api/analyze", {limit: limit || 20});
+  if (!data) return;
+  toast("已分析 " + data.analyzed.length + " 条岗位");
+  loadJobs();
+  loadOverview();
+}
+async function doDedupe() {
+  const data = await post("/api/dedupe");
+  if (!data) return;
+  toast(data.duplicates.length ? ("发现 " + data.duplicates.length + " 组重复，已标记")
+    : "没有发现跨平台重复");
+  loadJobs();
+}
+async function doReport() {
+  const data = await post("/api/report");
+  if (data) toast("报告已写到 data/report.md");
+}
+async function doImport() {
+  const text = document.getElementById("import-text").value;
+  if (!text.trim()) { toast("先粘贴 JD 内容", "err"); return; }
+  const data = await post("/api/import", {text});
+  if (!data) return;
+  toast("导入成功：新增 " + data.new + "，更新 " + data.updated);
+  loadJobs();
+  loadOverview();
+}
+async function jobAction(kind) {
+  const id = state.job.job.id;
+  if (kind === "analyze-one") {
+    const data = await post("/api/analyze", {job_id: id});
+    if (data) { toast("已分析"); await openJob(id); }
+  } else if (kind === "make-materials") {
+    const data = await post("/api/materials", {job_id: id});
+    if (data) { toast("材料已生成"); await openJob(id); loadOverview(); }
+  } else if (kind === "make-resume") {
+    const data = await post("/api/resume", {job_id: id});
+    if (!data) return;
+    pack.resume = data.result;
+    toast("简历已生成");
+    render();
+    loadOverview();
+  } else if (kind === "toggle-app") {
+    pack.app = !pack.app;
+    render();
+  } else if (kind === "translate") {
+    pack.busy = "正在翻译 JD…";
+    render();
+    const data = await post("/api/translate", {job_id: id});
+    pack.busy = "";
+    if (!data) { render(); return; }
+    const rep = data.report;
+    toast(rep.translated ? "翻译完成，已换成中文显示"
+      : (rep.failed.length ? ("翻译失败：" + rep.failed[0]) : "这条不需要翻译（已经是中文）"),
+      rep.translated ? "ok" : "err");
+    await openJob(id);
+  } else if (kind === "pack") {
+    const withLlm = false;
+    pack.busy = "正在生成材料…";
+    render();
+    const materials = await post("/api/materials", {job_id: id, use_llm: withLlm});
+    if (!materials) { pack.busy = ""; render(); return; }
+    pack.busy = "材料好了，正在生成简历并自检…";
+    render();
+    const resume = await post("/api/resume", {job_id: id});
+    pack.busy = "";
+    if (resume) pack.resume = resume.result;
+    toast(resume ? "求职包已生成：材料 + 简历" : "材料已生成，简历失败（看提示）");
+    await openJob(id);
+    loadOverview();
+  }
+}
+async function saveAppFor(jobId) {
+  const status = document.getElementById("app-status").value;
+  const data = await post("/api/application", {
+    job_id: jobId, status,
+    note: document.getElementById("app-note").value,
+    confirm: document.getElementById("app-confirm").checked});
+  if (!data) return;
+  toast("已记录：" + data.status_label);
+  pack.app = false;
+  render();
+  loadOverview();
+}
+async function genMaterials() {
+  const jobId = Number(document.getElementById("mat-job").value);
+  if (!jobId) { toast("先选一个岗位", "err"); return; }
+  const data = await post("/api/materials",
+    {job_id: jobId, use_llm: document.getElementById("mat-llm").checked});
+  if (!data) return;
+  toast("材料已生成（引擎 " + data.engine + "）");
+  loadMaterials();
+  loadOverview();
+}
+async function genResume() {
+  const jobId = Number(document.getElementById("res-job").value) || null;
+  const direction = document.getElementById("res-dir").value;
+  const box = document.getElementById("resume-result");
+  box.innerHTML = '<div class="doc" style="margin-top:12px">正在生成并自检…</div>';
+  const data = await post("/api/resume", jobId ? {job_id: jobId} : {direction});
+  if (!data) { box.innerHTML = ""; return; }
+  const r = data.result;
+  const paths = r.paths || {};
+  box.innerHTML = '<div class="doc" style="margin-top:12px">' +
+    "方向：" + esc(r.direction) + "　自检得分：" + r.score + "\n文件：" +
+    Object.entries(paths).map(([k, v]) => '<a href="/api/file?path=' + encodeURIComponent(v) +
+      '" target="_blank">' + k.toUpperCase() + "</a>").join("　") + "\n" +
+    ((r.layout && r.layout.pages) ? "页数：" + r.layout.pages + "\n" : "") +
+    ((r.fixes && r.fixes.length) ? "自动修正：" + esc(r.fixes.join("；")) + "\n" : "") +
+    ((r.warnings && r.warnings.length) ? "提示：" + esc(r.warnings.join("；")) + "\n" : "") +
+    ((r.issues || []).length ? "自检问题：" + esc(r.issues.map((i) => i.detail).join("；"))
+      : "自检没有发现问题") + "</div>";
+  toast("简历已生成");
+  loadResumes();
+  loadOverview();
+}
+async function saveApp() {
+  const jobId = Number(document.getElementById("app-job").value);
+  if (!jobId) { toast("先选一个岗位", "err"); return; }
+  const data = await post("/api/application", {
+    job_id: jobId,
+    status: document.getElementById("app-status").value,
+    note: document.getElementById("app-note").value,
+    confirm: document.getElementById("app-confirm").checked});
+  if (!data) return;
+  toast("已记录：" + data.status_label);
+  loadApps();
+  loadOverview();
+}
+async function verifyTools(all) {
+  const name = all ? null : document.getElementById("tool-name").value.trim();
+  if (!all && !name) { toast("填 owner/repo", "err"); return; }
+  const data = await post("/api/tools/verify", all ? {all: true} : {name});
+  if (!data) return;
+  const r = data.result;
+  document.getElementById("tool-result").innerHTML = '<div class="doc" style="margin-top:12px">' + esc(
+    (r.passed ? "通过：" + r.passed.join("、") + "\n" : "") +
+    ((r.failed && r.failed.length)
+      ? "未通过：" + r.failed.map((f) => f.name + "（" + f.detail + "）").join("；") : "") +
+    (r.detail || "")) + "</div>";
+  toast("验证完成");
+  loadTools();
+}
+async function evaluateTool() {
+  const name = document.getElementById("tool-name").value.trim();
+  if (!name) { toast("填 owner/repo", "err"); return; }
+  const data = await post("/api/tools/evaluate", {name});
+  if (!data) return;
+  const r = data.result;
+  document.getElementById("tool-result").innerHTML = '<div class="doc" style="margin-top:12px">' + esc(
+    "结论：" + r.verdict + "\n建议状态：" + r.recommended_state + "　许可证：" + r.license +
+    "　star：" + r.stars + "　最后提交：" + r.last_commit + "\nWindows：" + r.windows +
+    "　风险等级：" + r.risk_level + "　集成方式：" + r.integration_kind + "\n理由：\n- " +
+    (r.reasons || []).join("\n- ") +
+    ((r.risks || []).length ? "\n风险样例：\n" +
+      r.risks.map((x) => x.kind + "：" + (x.samples || []).join(" / ")).join("\n") : "")) + "</div>";
+  loadTools();
+}
+async function discoverTools() {
+  const query = document.getElementById("tool-query").value.trim();
+  const data = await post("/api/tools/discover", query ? {queries: [query], per_page: 6} : {});
+  if (!data) return;
+  const r = data.result;
+  document.getElementById("tool-result").innerHTML = '<div class="doc" style="margin-top:12px">' + esc(
+    "新增候选 " + r.added.length + " 个：" + r.added.join("、") +
+    ((r.errors || []).length ? "\n错误：" + r.errors.join("；") : "") +
+    "\n候选状态为 A（已发现，尚未验证），下一步用「深度评估」。") + "</div>";
+  loadTools();
+}
+async function sched(action) {
+  const interval = Number(document.getElementById("sched-interval").value || 180);
+  const data = await post("/api/scheduler", {action, interval_minutes: interval});
+  if (!data) return;
+  toast("定时任务：" + JSON.stringify(data.result));
+  loadRuns();
+  loadOverview();
+}
+document.getElementById("nav").addEventListener("click", (event) => {
+  const btn = event.target.closest("button[data-tab]");
+  if (!btn) return;
+  state.tab = btn.dataset.tab;
+  state.view = "list";
+  render();
+  if (state.tab === "materials") loadMaterials();
+  if (state.tab === "resumes") loadResumes();
+  if (state.tab === "apps") loadApps();
+  if (state.tab === "tools") loadTools();
+  if (state.tab === "evidence") loadEvidence();
+  if (state.tab === "runs") loadRuns();
+});
+loadOverview().then(loadJobs);
+</script>
+</body>
+</html>

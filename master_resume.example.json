@@ -1,0 +1,37 @@
+{
+  "version": "1.0",
+  "note": "开源示例简历事实源。每条经历均对应可落地的真实技能证据，严禁虚构经历。",
+  "basics": {
+    "name": "张三",
+    "age": "25",
+    "city": "上海",
+    "phone": "13800000000",
+    "email": "zhangsan@example.com",
+    "education": "本科 · 示例大学 · 计算机科学与技术",
+    "work_mode": "坐班或远程均可",
+    "headline": "Python 工程师 / 自动化流程 / AI 应用落地"
+  },
+  "summary": {
+    "default": "主力语言 Python，擅长自动化工具开发、公开接口整合与数据清洗。做事习惯先把目标拆解成可验收的步骤，编写完备的校验逻辑确保交付质量。"
+  },
+  "skill_groups": [
+    {
+      "label": "后端与自动化",
+      "items": "Python · FastAPI · SQLite · 浏览器自动化（CDP）"
+    },
+    {
+      "label": "AI 应用与工作流",
+      "items": "大模型 API · 提示词工程 · Agent 任务拆解与工具调用"
+    }
+  ],
+  "projects": [
+    {
+      "id": "job-agent",
+      "name": "自动化求职与智能联络智能体",
+      "tagline": "基于 Chrome 调试协议与状态机的求职自动化流程，覆盖职位筛选、意向沟通与消息监控。",
+      "tech": ["Python", "SQLite", "CDP", "大模型接口"],
+      "role": "独立设计与实现",
+      "details": "基于标准库实现极简 CDP 客户端；建立双重校验闸门防止重复打扰；实现去 AI 味的 50~95 字自然沟通话术。"
+    }
+  ]
+}

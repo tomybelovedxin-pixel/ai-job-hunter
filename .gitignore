@@ -1,0 +1,45 @@
+# 绝对隐私保护：忽略所有个人数据、真实简历与联系记录
+profile.json
+master_resume.json
+COMPANY_CONTACT_HISTORY.md
+evidence_claims.json
+
+# 浏览器会话与登录凭证（绝对禁止上传）
+data/
+data/chrome-profile/
+data/browser-profile/
+*.sqlite
+*.sqlite3
+*.db
+
+# 真实生成的简历产物与报告
+output/
+recovered/
+tmp/
+*.pdf
+*.docx
+
+# 凭据与敏感环境变量
+.env
+.env.*
+*.key
+*.pem
+
+# Python 运行时与缓存
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+dist/
+build/
+*.egg-info/
+
+# IDE 与操作系统临时文件
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
