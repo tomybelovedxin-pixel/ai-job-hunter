@@ -325,7 +325,17 @@ def list_targets(port: int) -> list[dict[str, Any]]:
     try:
         data = http_json(port, "/json/list")
     except OSError as exc:
-        raise CDPError(f"连不上调试端口 {port}，浏览器没起来？({exc})") from exc
+        hint = (
+            f"\n\n====================================================================\n"
+            f"❌ 未检测到正在运行的 Chrome 调试端口 (http://127.0.0.1:{port})\n"
+            f"👉 解决办法：\n"
+            f"   - Windows 用户：请直接双击运行项目根目录的 【start_browser.bat】\n"
+            f"   - macOS / Linux 用户：请在终端执行 【bash start_browser.sh】\n"
+            f"   - 或手动命令启动：chrome.exe --remote-debugging-port={port} --user-data-dir=\"data/chrome-profile\"\n"
+            f"浏览器启动并在页面登录你的求职账号后，重新运行本程序即可！\n"
+            f"====================================================================\n"
+        )
+        raise CDPError(hint) from exc
     return [t for t in data if t.get("type") == "page"]
 
 
