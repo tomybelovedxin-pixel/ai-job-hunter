@@ -63,8 +63,9 @@ def launch(
     args = [
         exe,
         f"--remote-debugging-port={port}",
+        "--remote-debugging-address=127.0.0.1",
+        f"--remote-allow-origins=http://127.0.0.1:{port},http://localhost:{port}",
         f"--user-data-dir={user_data_dir}",
-        "--remote-allow-origins=*",
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-features=Translate,OptimizationHints",

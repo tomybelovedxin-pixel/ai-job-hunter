@@ -192,6 +192,76 @@ CONVERSATION_JS = """
 })()
 """
 
+# 简历附件请求识别 JS：严格区分结构化卡片与普通聊天正文，杜绝误触“拒绝”按钮
+RESUME_REQUEST_JS = """
+(() => {
+  const pane = document.querySelector('.chat-conversation, [class*="conversation"]');
+  if (!pane) return JSON.stringify({ok: false, message: "未找到会话消息面板"});
+
+  const items = Array.from(pane.querySelectorAll('li.message-item, .chat-message, [class*="message-item"]'));
+  const cards = [];
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const text = (item.innerText || '').trim();
+    const isRequestCard = (
+      text.includes("请求获取您的附件简历") ||
+      text.includes("希望获取您的完整简历") ||
+      text.includes("发起了简历请求") ||
+      text.includes("请求发送简历") ||
+      text.includes("求简历") ||
+      text.includes("请求互换简历") ||
+      text.includes("想要您的附件简历")
+    );
+    if (!isRequestCard) continue;
+
+    const isAlreadyAccepted = (
+      text.includes("已同意") ||
+      text.includes("已发送简历") ||
+      text.includes("已投递") ||
+      text.includes("您已同意发送") ||
+      text.includes("已将附件简历发送给对方")
+    );
+
+    const buttons = Array.from(item.querySelectorAll('button, a.btn, [class*="btn"], .confirm-btn, .btn-sure'));
+    let targetButtonSelector = null;
+    let targetButtonText = "";
+    let rejectFound = false;
+
+    for (let j = 0; j < buttons.length; j++) {
+      const b = buttons[j];
+      const bText = (b.innerText || b.textContent || '').trim();
+      if (bText.includes("拒绝") || bText.includes("不合适") || bText.includes("取消") || bText.includes("关闭")) {
+        rejectFound = true;
+        continue;
+      }
+      if (bText.includes("同意") || bText.includes("发送附件") || bText.includes("立即发送") || bText === "发送") {
+        const attrVal = "agree-" + i + "-" + j;
+        b.setAttribute("data-jobagent-action", attrVal);
+        targetButtonSelector = '[data-jobagent-action="' + attrVal + '"]';
+        targetButtonText = bText;
+      }
+    }
+
+    cards.push({
+      index: i,
+      snippet: text.slice(0, 150),
+      is_already_accepted: isAlreadyAccepted,
+      has_agree_button: !!targetButtonSelector,
+      agree_button_text: targetButtonText,
+      reject_button_present: rejectFound,
+      button_selector: targetButtonSelector
+    });
+  }
+
+  return JSON.stringify({
+    ok: true,
+    total_cards: cards.length,
+    cards: cards
+  });
+})()
+"""
+
 
 class BossAdapter(Adapter):
     name = "boss"
@@ -755,4 +825,133 @@ class BossAdapter(Adapter):
         sent = self.send_text(text)
         result.update(sent)
         result["status"] = "sent" if sent["verified"] else "sent-unverified"
+        return result
+
+    # ---------- 简历附件请求与安全自动同意 ----------
+
+    def current_account_info(self) -> dict[str, Any]:
+        """读取当前登录的账号信息，确认登录状态与身份。"""
+        info_js = """
+        (() => {
+          const userNode = document.querySelector('.nav-figure, .user-nav, .user-info, [class*="nav-user"]');
+          if (!userNode) return JSON.stringify({logged_in: false, user_name: ""});
+          const nameEl = document.querySelector('.user-nav .name, .header-user-name, [class*="user-name"]');
+          return JSON.stringify({
+            logged_in: true,
+            user_name: nameEl ? (nameEl.innerText || '').trim() : "已登录用户"
+          });
+        })()
+        """
+        try:
+            raw = self.session.evaluate(info_js, await_promise=False)
+            return json.loads(raw)
+        except Exception:
+            return {"logged_in": False, "user_name": ""}
+
+    def detect_resume_request(self) -> dict[str, Any]:
+        """扫描当前会话是否包含 HR 发起的简历附件投递请求。"""
+        raw = self.session.evaluate(RESUME_REQUEST_JS, await_promise=False)
+        try:
+            return json.loads(raw)
+        except Exception as exc:
+            return {"ok": False, "message": f"解析失败: {exc}", "cards": []}
+
+    def accept_resume_request(
+        self,
+        company: str,
+        hr_name: str | None = None,
+        *,
+        dry_run: bool = True,
+    ) -> dict[str, Any]:
+        """安全识别并同意 HR 发起的简历附件请求。严格履行 9 大安全防护准则。"""
+        result: dict[str, Any] = {
+            "company": company,
+            "hr_name": hr_name,
+            "dry_run": dry_run,
+            "status": "pending",
+            "verified": False,
+        }
+
+        # 准则 1：风控与登录态严格核查
+        block = self.check_block()
+        if block:
+            snapshot = self.dump_html("accept-resume-blocked")
+            raise BlockedError(f"操作前检测到登录或风控阻断: {block}，快照: {snapshot}")
+
+        # 准则 2：会话面板严格存在性与归属核查（必须确认当前打开的是正确的目标公司）
+        history = self.conversation_history()
+        if not history.get("pane"):
+            snapshot = self.dump_html("accept-resume-nopane")
+            raise AdapterError(f"未能读取到聊天会话面板，无法确认会话上下文，已终止操作。快照: {snapshot}")
+
+        keys = self._company_keys(company)
+        current_text = f"{history.get('company', '')} {history.get('name', '')} {history.get('job', '')}"
+        if keys and not any(k in current_text for k in keys):
+            # 若当前面板不匹配目标公司，尝试切换到目标会话
+            self.log(f"当前会话（{current_text[:30]}）与目标公司（{company}）不一致，尝试从列表重新选中")
+            picked = self.open_conversation(company)
+            if not picked:
+                snapshot = self.dump_html("accept-resume-wrong-company")
+                raise AdapterError(f"无法定位到目标公司「{company}」的会话，为防误同意已终止操作。快照: {snapshot}")
+            history = self.conversation_history()
+            if not history.get("pane"):
+                snapshot = self.dump_html("accept-resume-reopen-nopane")
+                raise AdapterError(f"重新打开会话后读取面板失败。快照: {snapshot}")
+
+        # 准则 3 & 4：区分结构化卡片与普通聊天，扫描卡片
+        detect_res = self.detect_resume_request()
+        if not detect_res.get("ok"):
+            snapshot = self.dump_html("accept-resume-detect-err")
+            raise AdapterError(f"检测简历请求卡片失败: {detect_res.get('message')}，快照: {snapshot}")
+
+        cards = detect_res.get("cards", [])
+        if not cards:
+            result["status"] = "no_request"
+            result["note"] = "当前会话未检测到 HR 发起的简历附件请求卡片（普通聊天消息不触发自动同意）"
+            return result
+
+        # 取最新的求简历卡片
+        target_card = cards[-1]
+
+        # 准则 5：防重复同意
+        if target_card.get("is_already_accepted"):
+            result["status"] = "already_accepted"
+            result["verified"] = True
+            result["note"] = "该请求此前已经同意并发送过附件简历，已自动防重跳过"
+            return result
+
+        # 准则 6：防点错按钮，严格校验按钮存在且非“拒绝”
+        if not target_card.get("has_agree_button"):
+            snapshot = self.dump_html("accept-resume-nobtn")
+            raise AdapterError(f"识别到简历请求但未定位到安全同意按钮（可能已被处理或结构变动），快照: {snapshot}")
+
+        btn_selector = target_card["button_selector"]
+        btn_text = target_card["agree_button_text"]
+        result["button_text"] = btn_text
+
+        # 准则 7：Dry-run 保护
+        if dry_run:
+            result["status"] = "dry-run"
+            result["note"] = f"已成功识别到简历请求卡片与同意按钮『{btn_text}』；dry_run 模式未实际点击"
+            return result
+
+        # 准则 8：执行点击并检查结果
+        click_res = self.click_expr(btn_selector)
+        if not click_res.get("clicked"):
+            snapshot = self.dump_html("accept-resume-click-fail")
+            raise AdapterError(f"点击同意按钮失败，快照: {snapshot}")
+
+        # 准则 9：回读确认真实结果（等待 1.5s 后核验状态变为已同意）
+        time.sleep(1.5)
+        verify_detect = self.detect_resume_request()
+        new_cards = verify_detect.get("cards", [])
+        verified = False
+        if new_cards:
+            latest = new_cards[-1]
+            if latest.get("is_already_accepted") or not latest.get("has_agree_button"):
+                verified = True
+
+        result["status"] = "accepted" if verified else "clicked-unverified"
+        result["verified"] = verified
+        result["note"] = "已同意发送简历附件并通过状态校验" if verified else "已执行点击但未能确证页面状态更新"
         return result

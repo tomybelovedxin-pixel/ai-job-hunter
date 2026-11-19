@@ -36,6 +36,11 @@ class Adapter:
     def send_greeting(self, job: dict[str, Any], text: str, *, dry_run: bool = True) -> dict[str, Any]:
         raise NotImplementedError
 
+    def accept_resume_request(self, company: str, hr_name: str | None = None,
+                              *, dry_run: bool = True) -> dict[str, Any]:
+        """识别并同意 HR 发起的简历附件投递请求。"""
+        raise NotImplementedError
+
     def check_block(self) -> str | None:
         """返回风控/登录提示文本；正常返回 None。"""
         raise NotImplementedError

@@ -36,11 +36,30 @@ def app_available() -> tuple[bool, str]:
 class Handler(BaseHTTPRequestHandler):
     server_version = "jobagent-ui/0.2"
     store_path: Path
+    MAX_BODY_SIZE = 2 * 1024 * 1024  # 2MB 限制防 DoS
 
     def log_message(self, fmt: str, *args: Any) -> None:
         status = str(args[1]) if len(args) > 1 else ""
         if status.startswith(("4", "5")):
             print(f"[ui] {fmt % args}")
+
+    def _is_local_client(self) -> bool:
+        """限制仅允许本机客户端访问。"""
+        client_ip = getattr(self, "client_address", ("", 0))[0]
+        return client_ip in ("127.0.0.1", "::1", "localhost", "")
+
+    def _check_csrf(self) -> bool:
+        """检验 POST 请求的来源，防御跨站请求伪造 (CSRF)。"""
+        origin = self.headers.get("Origin")
+        if origin:
+            parsed = urllib.parse.urlparse(origin)
+            return parsed.hostname in ("127.0.0.1", "localhost")
+        referer = self.headers.get("Referer")
+        if referer:
+            parsed = urllib.parse.urlparse(referer)
+            return parsed.hostname in ("127.0.0.1", "localhost")
+        host = self.headers.get("Host", "").split(":")[0]
+        return host in ("127.0.0.1", "localhost")
 
     # ---------------- 基础 ----------------
 
@@ -59,6 +78,8 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         if not length:
             return {}
+        if length > self.MAX_BODY_SIZE:
+            raise ValueError(f"请求数据过大（限制 {self.MAX_BODY_SIZE // (1024 * 1024)}MB）")
         raw = self.rfile.read(length).decode("utf-8", "replace")
         try:
             return json.loads(raw)
@@ -68,6 +89,8 @@ class Handler(BaseHTTPRequestHandler):
     # ---------------- 路由 ----------------
 
     def do_GET(self) -> None:  # noqa: N802
+        if not self._is_local_client():
+            return self._error("未授权访问：WebUI 仅限本机访问 (127.0.0.1)", 403)
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
@@ -108,9 +131,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(f"{type(exc).__name__}: {exc}", 500)
 
     def do_POST(self) -> None:  # noqa: N802
+        if not self._is_local_client():
+            return self._error("未授权访问：WebUI 仅限本机访问 (127.0.0.1)", 403)
+        if not self._check_csrf():
+            return self._error("CSRF 来源校验失败，拒绝执行该写操作", 403)
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
-        payload = self._body()
+        try:
+            payload = self._body()
+        except ValueError as exc:
+            return self._error(str(exc), 413)
+
         try:
             result = api.action(self.store_path, path, payload)
             return self._json(result)
@@ -141,30 +172,47 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _file(self, raw_path: str) -> None:
-        """安全下载项目生成的文件，防越权与目录穿越。"""
+        """安全下载项目生成的文件，防越权、目录穿越与符号链接逃逸。"""
         if not raw_path:
             return self._error("缺少 path 参数", 400)
         target = Path(raw_path)
-        if not target.is_absolute():
-            target = ROOT / target
-        resolved = target.resolve()
-        try:
-            resolved.relative_to(ROOT.resolve())
-        except (ValueError, RuntimeError):
-            return self._error("只允许访问项目目录内的文件", 403)
 
-        # 绝对保护敏感凭据、数据库与个人主画像不被 WebUI 接口泄露
-        forbidden_exts = {".key", ".pem", ".env", ".sqlite", ".sqlite3", ".db"}
+        # 优先黑名单与隐藏文件拦截，防止通过 404/403 差异探测敏感文件存在性
+        forbidden_exts = {".key", ".pem", ".sqlite", ".sqlite3", ".db"}
         forbidden_files = {"profile.json", "master_resume.json", "config.toml", "evidence_claims.json"}
+        name_lower = target.name.lower()
         if (
-            resolved.suffix.lower() in forbidden_exts
-            or resolved.name.lower() in forbidden_files
-            or any(part.startswith(".") for part in resolved.relative_to(ROOT.resolve()).parts)
+            target.suffix.lower() in forbidden_exts
+            or name_lower in forbidden_files
+            or name_lower.startswith(".")
         ):
             return self._error("禁止通过 Web 接口访问系统核心配置或隐私数据文件", 403)
 
-        if not resolved.exists() or not resolved.is_file():
+        if not target.is_absolute():
+            target = ROOT / target
+
+        try:
+            # 严格解析物理路径（自动跟随符号链接到物理源头）
+            resolved = target.resolve(strict=True)
+            root_resolved = ROOT.resolve(strict=True)
+        except (FileNotFoundError, OSError):
             return self._error("文件不存在", 404)
+
+        try:
+            # 严格确保符号链接解析后的真实物理路径也在项目目录内
+            rel = resolved.relative_to(root_resolved)
+        except (ValueError, RuntimeError):
+            return self._error("只允许访问项目目录内的文件（禁止符号链接逃逸）", 403)
+
+        if (
+            resolved.suffix.lower() in forbidden_exts
+            or resolved.name.lower() in forbidden_files
+            or any(part.startswith(".") for part in rel.parts)
+        ):
+            return self._error("禁止通过 Web 接口访问系统核心配置或隐私数据文件", 403)
+
+        if not resolved.is_file():
+            return self._error("目标不是有效文件", 400)
 
         body = resolved.read_bytes()
         suffix = resolved.suffix.lower()

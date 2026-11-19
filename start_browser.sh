@@ -19,5 +19,5 @@ fi
 
 mkdir -p "$USER_DIR"
 echo "Starting Chrome with debug port $PORT..."
-"$CHROME_EXE" --remote-debugging-port=$PORT --user-data-dir="$USER_DIR" --remote-allow-origins=* --no-first-run --no-default-browser-check "https://www.zhipin.com/web/geek/chat" &
+"$CHROME_EXE" --remote-debugging-port=$PORT --remote-debugging-address=127.0.0.1 --remote-allow-origins=http://127.0.0.1:$PORT,http://localhost:$PORT --user-data-dir="$USER_DIR" --no-first-run --no-default-browser-check "https://www.zhipin.com/web/geek/chat" &
 echo "Started! Please log in to your account and keep the window open."

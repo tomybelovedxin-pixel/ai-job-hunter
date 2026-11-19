@@ -49,6 +49,8 @@ class WebSocket:
         if parsed.query:
             path += "?" + parsed.query
 
+        # 默认发送本机可信 Origin，适配仅允许本机访问的 CDP 安全策略
+        origin = origin or f"http://{host}:{port}"
         self._sock = socket.create_connection((host, port), timeout=timeout)
         self._sock.settimeout(timeout)
         self._buf = b""
@@ -188,8 +190,10 @@ class WebSocket:
 class CDP:
     """一条 WebSocket 对应一个页面目标（不用 sessionId，最简单也最稳）。"""
 
-    def __init__(self, ws_url: str, timeout: float = 30.0):
-        self.ws = WebSocket(ws_url, timeout=timeout)
+    def __init__(self, ws_url: str, timeout: float = 30.0, origin: str | None = None):
+        parsed = urlparse(ws_url)
+        origin = origin or f"http://{parsed.hostname or '127.0.0.1'}:{parsed.port or 9222}"
+        self.ws = WebSocket(ws_url, timeout=timeout, origin=origin)
         self._next_id = 0
         self._events: list[dict[str, Any]] = []
         self._listeners: dict[str, list[Callable[[dict[str, Any]], None]]] = {}

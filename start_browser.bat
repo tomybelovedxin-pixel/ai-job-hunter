@@ -33,7 +33,7 @@ if not exist "%USER_DIR%" (
     mkdir "%USER_DIR%"
 )
 
-start "" "%CHROME_EXE%" --remote-debugging-port=%PORT% --user-data-dir="%USER_DIR%" --remote-allow-origins=* --no-first-run --no-default-browser-check "https://www.zhipin.com/web/geek/chat"
+start "" "%CHROME_EXE%" --remote-debugging-port=%PORT% --remote-debugging-address=127.0.0.1 --remote-allow-origins=http://127.0.0.1:%PORT%,http://localhost:%PORT% --user-data-dir="%USER_DIR%" --no-first-run --no-default-browser-check "https://www.zhipin.com/web/geek/chat"
 
 echo [2/2] 启动指令已发出！
 echo 请在弹出的 Chrome 浏览器中登录你的求职账号。
