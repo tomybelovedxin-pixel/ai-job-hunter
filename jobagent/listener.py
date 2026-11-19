@@ -7,7 +7,8 @@ from typing import Any, Callable
 from pathlib import Path
 
 from . import browser, cdp
-from .adapters.boss import BossAdapter
+from .adapters import boss
+from .adapters.boss import BossAdapter, compute_card_fingerprint
 from .config import Config, load as load_config
 from .store import Store
 
@@ -81,7 +82,7 @@ class ChatListener:
         job = history.get("job", "")
 
         # 扫描简历请求
-        detect_res = self.adapter.detect_resume_request()
+        detect_res = self.adapter.detect_resume_request(company=company, hr_name=name)
         cards = detect_res.get("cards", []) if detect_res.get("ok") else []
         event: dict[str, Any] = {
             "ok": True,
@@ -94,36 +95,67 @@ class ChatListener:
 
         if cards:
             latest = cards[-1]
+            fingerprint = latest.get("fingerprint") or boss.compute_card_fingerprint(
+                company, name, latest.get("snippet", "")
+            )
+            event["fingerprint"] = fingerprint
+
             if latest.get("is_already_accepted"):
                 event["resume_status"] = "already_accepted"
             elif latest.get("has_agree_button"):
-                card_key = f"{company}::{name}::{latest.get('snippet', '')[:60]}"
-                if card_key in self.unverified_or_processed:
+                # 1. 跨进程持久化防重核验（查阅本地独立 SQLite 数据库）
+                db_record = self.store.get_resume_request(fingerprint)
+                if db_record and db_record.get("status") in ("accepted", "clicked-unverified"):
+                    rec_status = db_record.get("status")
                     event["resume_status"] = "already_attempted"
-                    self.log(f"卡片【{company} - {name}】此前已执行过处理或标记为未核实状态，为防重复点击已自动跳过")
+                    event["db_status"] = rec_status
+                    self.log(
+                        f"卡片【{company} - {name}】在 SQLite 库中已有记录 (状态: {rec_status})，"
+                        f"跨进程持久化防重生效，禁止重复操作"
+                    )
+                # 2. 内存防重核验
+                elif fingerprint in self.unverified_or_processed:
+                    event["resume_status"] = "already_attempted"
+                    self.log(f"卡片【{company} - {name}】在本次运行中已尝试或处于未核实状态，禁止重复点击")
                 else:
                     event["resume_status"] = "pending_request"
                     event["button_text"] = latest.get("agree_button_text")
 
                     if self.auto_accept:
-                        self.log(f"检测到 HR「{name}」发起简历附件请求，正在执行安全同意...")
-                        self.unverified_or_processed.add(card_key)
+                        self.log(f"检测到 HR「{name}」发起简历附件请求 (指纹: {fingerprint[:8]})，正在执行安全同意...")
+                        self.unverified_or_processed.add(fingerprint)
                         action_res = self.adapter.accept_resume_request(
                             company=company, hr_name=name, dry_run=False
                         )
                         event["action_result"] = action_res
-                        if action_res.get("verified"):
-                            self.log(f"已成功同意并发送附件简历给 {company} - {name}！")
+                        res_status = action_res.get("status", "unknown")
+                        verified = bool(action_res.get("verified", False))
+                        note = action_res.get("note", "")
+
+                        # 持久化落库记录（保障守护进程重启后依然防重）
+                        self.store.record_resume_request(
+                            fingerprint=fingerprint,
+                            company=company,
+                            hr_name=name,
+                            job=job,
+                            snippet=latest.get("snippet", ""),
+                            status=res_status,
+                            verified=verified,
+                            note=note,
+                        )
+
+                        if verified:
+                            self.log(f"已成功同意并发送附件简历给 {company} - {name}！(指纹: {fingerprint[:8]})")
                             self.store.log_event(
                                 "accept_resume",
                                 company,
-                                f"自动同意附件简历: {name} ({job}), 校验通过",
+                                f"自动同意附件简历: {name} ({job}), 指纹: {fingerprint[:8]}, 校验通过",
                             )
                         else:
-                            self.log(f"点击完成但状态待确认: {action_res.get('note')} (已自动防重)")
+                            self.log(f"点击完成但状态待确认: {note} (已持久化记录，严禁重复点击)")
                     else:
                         self.log(
-                            f"提示：检测到 HR「{name}」索要附件简历卡片！"
+                            f"提示：检测到 HR「{name}」索要附件简历卡片 (指纹: {fingerprint[:8]})！"
                             f"(当前 auto_accept_resume=false，已保持安全只读，可在 config.toml 中开启)"
                         )
         return event

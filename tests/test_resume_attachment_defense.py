@@ -287,6 +287,77 @@ class TestResumeAttachmentDefense(unittest.TestCase):
         self.assertFalse(res["verified"])
         self.assertIn("未确认状态", res["note"])
 
+    def test_card_identity_fingerprint_mismatch_rejected(self):
+        """点击前卡片身份或指纹不匹配（例如卡片被替换或变动）-> 坚决拒绝点击并终止。"""
+        self.adapter.detect_resume_request = MagicMock(side_effect=[
+            # 1. 初始检测：指纹 A
+            {
+                "ok": True,
+                "cards": [{
+                    "snippet": "向您发起了简历附件请求 A",
+                    "fingerprint": "fingerprint_card_A",
+                    "is_already_accepted": False,
+                    "has_agree_button": True,
+                    "agree_button_text": "同意发送",
+                    "button_selector": "[data-jobagent-action='agree-0-0']",
+                }],
+            },
+            # 2. 点击前 precheck：返回不同卡片指纹 B（卡片漂移）
+            {
+                "ok": True,
+                "cards": [{
+                    "snippet": "向您发起了简历附件请求 B",
+                    "fingerprint": "fingerprint_card_B",
+                    "is_already_accepted": False,
+                    "has_agree_button": True,
+                    "agree_button_text": "同意发送",
+                    "button_selector": "[data-jobagent-action='agree-0-0']",
+                }],
+            },
+        ])
+        with self.assertRaises(AdapterError) as exc_info:
+            self.adapter.accept_resume_request("测试科技", dry_run=False)
+        self.assertIn("卡片指纹不一致", str(exc_info.exception))
+
+    def test_button_text_changed_before_click_rejected(self):
+        """点击前按钮文案发生变动（变为非白名单或包含拒绝语义）-> 坚决终止。"""
+        self.adapter.detect_resume_request = MagicMock(side_effect=[
+            # 1. 初始检测：正常文案
+            {
+                "ok": True,
+                "cards": [{
+                    "snippet": "向您发起了简历附件请求",
+                    "fingerprint": "card_fp_1",
+                    "is_already_accepted": False,
+                    "has_agree_button": True,
+                    "agree_button_text": "同意发送",
+                    "button_selector": "[data-jobagent-action='agree-0-0']",
+                }],
+            },
+            # 2. 点击前 precheck：按钮突变包含拒绝
+            {
+                "ok": True,
+                "cards": [{
+                    "snippet": "向您发起了简历附件请求",
+                    "fingerprint": "card_fp_1",
+                    "is_already_accepted": False,
+                    "has_agree_button": True,
+                    "agree_button_text": "拒绝发送",
+                    "button_selector": "[data-jobagent-action='agree-0-0']",
+                }],
+            },
+        ])
+        with self.assertRaises(AdapterError) as exc_info:
+            self.adapter.accept_resume_request("测试科技", dry_run=False)
+        self.assertIn("拒绝/取消", str(exc_info.exception))
+
+    def test_hr_or_company_mismatch_rejected(self):
+        """当前会话中的 HR 姓名与目标 HR 不匹配时拒绝操作。"""
+        # 当前会话是 HR李，目标是 HR王
+        with self.assertRaises(AdapterError) as exc_info:
+            self.adapter.accept_resume_request("测试科技", hr_name="HR王", dry_run=True)
+        self.assertIn("不匹配", str(exc_info.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

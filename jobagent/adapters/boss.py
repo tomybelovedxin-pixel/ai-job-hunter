@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import urllib.parse
@@ -261,6 +262,15 @@ RESUME_REQUEST_JS = """
   });
 })()
 """
+
+
+def compute_card_fingerprint(company: str, hr_name: str, snippet: str) -> str:
+    """生成稳定唯一的简历请求卡片指纹，结合公司、HR与卡片文本。"""
+    norm_c = (company or "").strip().lower()
+    norm_h = (hr_name or "").strip().lower()
+    norm_s = "".join((snippet or "").split())
+    raw = f"{norm_c}::{norm_h}::{norm_s}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
 class BossAdapter(Adapter):
@@ -903,11 +913,18 @@ class BossAdapter(Adapter):
         except Exception:
             return {"logged_in": False, "user_name": ""}
 
-    def detect_resume_request(self) -> dict[str, Any]:
-        """扫描当前会话是否包含 HR 发起的简历附件投递请求。"""
+    def detect_resume_request(self, company: str = "", hr_name: str = "") -> dict[str, Any]:
+        """扫描当前会话是否包含 HR 发起的简历附件投递请求，并附加稳定卡片指纹。"""
         raw = self.session.evaluate(RESUME_REQUEST_JS, await_promise=False)
         try:
-            return json.loads(raw)
+            data = json.loads(raw)
+            if data.get("ok"):
+                for card in data.get("cards", []):
+                    if not card.get("fingerprint"):
+                        card["fingerprint"] = compute_card_fingerprint(
+                            company, hr_name, card.get("snippet", "")
+                        )
+            return data
         except Exception as exc:
             return {"ok": False, "message": f"解析失败: {exc}", "cards": []}
 
@@ -918,13 +935,14 @@ class BossAdapter(Adapter):
         *,
         dry_run: bool = True,
     ) -> dict[str, Any]:
-        """安全识别并同意 HR 发起的简历附件请求。严格履行 9 大安全防护准则。"""
+        """安全识别并同意 HR 发起的简历附件请求。严格履行卡片指纹与多重状态核验。"""
         result: dict[str, Any] = {
             "company": company,
             "hr_name": hr_name,
             "dry_run": dry_run,
             "status": "pending",
             "verified": False,
+            "fingerprint": "",
         }
 
         # 准则 1：风控与登录态严格核查
@@ -933,7 +951,7 @@ class BossAdapter(Adapter):
             snapshot = self.dump_html("accept-resume-blocked")
             raise BlockedError(f"操作前检测到登录或风控阻断: {block}，快照: {snapshot}")
 
-        # 准则 2：会话面板严格存在性与归属核查（必须确认当前打开的是正确的目标公司）
+        # 准则 2：会话面板严格存在性与归属核查（必须确认当前打开的是正确的目标公司与HR）
         history = self.conversation_history()
         if not history.get("pane"):
             snapshot = self.dump_html("accept-resume-nopane")
@@ -953,8 +971,15 @@ class BossAdapter(Adapter):
                 snapshot = self.dump_html("accept-resume-reopen-nopane")
                 raise AdapterError(f"重新打开会话后读取面板失败。快照: {snapshot}")
 
-        # 准则 3 & 4：区分结构化卡片与普通聊天，扫描卡片
-        detect_res = self.detect_resume_request()
+        # 严格验证 HR 身份
+        current_hr = str(history.get("name", "")).strip()
+        if hr_name and current_hr:
+            if hr_name.strip() not in current_hr and current_hr not in hr_name.strip():
+                snapshot = self.dump_html("accept-resume-wrong-hr")
+                raise AdapterError(f"当前会话中的 HR 姓名「{current_hr}」与目标 HR「{hr_name}」不匹配，操作终止。快照: {snapshot}")
+
+        # 准则 3 & 4：区分结构化卡片与普通聊天，扫描卡片并建立卡片身份指纹
+        detect_res = self.detect_resume_request(company=company, hr_name=current_hr or (hr_name or ""))
         if not detect_res.get("ok"):
             snapshot = self.dump_html("accept-resume-detect-err")
             raise AdapterError(f"检测简历请求卡片失败: {detect_res.get('message')}，快照: {snapshot}")
@@ -965,17 +990,25 @@ class BossAdapter(Adapter):
             result["note"] = "当前会话未检测到 HR 发起的简历附件请求卡片（普通聊天消息不触发自动同意）"
             return result
 
-        # 取最新的求简历卡片
-        target_card = cards[-1]
+        # 筛选待处理的卡片（不盲目使用 cards[-1]）
+        def _get_fp(c: dict[str, Any]) -> str:
+            return c.get("fingerprint") or compute_card_fingerprint(
+                company, current_hr or (hr_name or ""), c.get("snippet", "")
+            )
 
-        # 准则 5：防重复同意
-        if target_card.get("is_already_accepted"):
+        pending_cards = [c for c in cards if not c.get("is_already_accepted")]
+        if not pending_cards:
             result["status"] = "already_accepted"
             result["verified"] = True
-            result["note"] = "该请求此前已经同意并发送过附件简历，已自动防重跳过"
+            result["fingerprint"] = _get_fp(cards[-1])
+            result["note"] = "该会话中的所有简历请求此前已处于已同意状态，已自动防重跳过"
             return result
 
-        # 准则 6：防点错按钮，严格校验按钮存在且明确为同意文案，严禁点击拒绝/取消/关闭
+        target_card = pending_cards[-1]
+        target_fingerprint = _get_fp(target_card)
+        result["fingerprint"] = target_fingerprint
+
+        # 准则 5：校验同意按钮存在性
         if not target_card.get("has_agree_button"):
             snapshot = self.dump_html("accept-resume-nobtn")
             raise AdapterError(f"识别到简历请求但未定位到安全同意按钮（可能已被处理或结构变动），快照: {snapshot}")
@@ -984,7 +1017,7 @@ class BossAdapter(Adapter):
         btn_text = (target_card.get("agree_button_text") or "").strip()
         result["button_text"] = btn_text
 
-        # 按钮文本安全校验
+        # 按钮文本安全白名单校验（绝不允许点击拒绝/取消/关闭或未知按钮）
         safe_agree_keywords = ("同意", "发送附件", "立即发送", "发送")
         forbidden_keywords = ("拒绝", "不合适", "取消", "关闭")
         if any(bad in btn_text for bad in forbidden_keywords):
@@ -994,61 +1027,91 @@ class BossAdapter(Adapter):
             snapshot = self.dump_html("accept-resume-unknown-btn")
             raise AdapterError(f"按钮文案『{btn_text}』未匹配已知安全同意文案，已拒绝点击，快照: {snapshot}")
 
-        # 准则 7：Dry-run 保护
+        # 准则 6：Dry-run 保护
         if dry_run:
             result["status"] = "dry-run"
-            result["note"] = f"已成功识别到简历请求卡片与同意按钮『{btn_text}』；dry_run 模式未实际点击"
+            result["note"] = f"已成功识别到简历请求卡片与同意按钮『{btn_text}』(指纹:{target_fingerprint[:8]})；dry_run 模式未实际点击"
             return result
 
-        # 准则 8：点击前二次重新核验目标卡片与按钮存在性（防页面异步刷新或卡片瞬时消失）
-        precheck = self.detect_resume_request()
+        # 准则 7：点击前重新验证公司、HR、当前聊天会话、卡片状态、按钮选择器和按钮文案
+        pre_hist = self.conversation_history()
+        if not pre_hist.get("pane"):
+            snapshot = self.dump_html("accept-resume-precheck-nopane")
+            raise AdapterError(f"点击前会话面板丢失，操作终止，快照: {snapshot}")
+
+        pre_text = f"{pre_hist.get('company', '')} {pre_hist.get('name', '')} {pre_hist.get('job', '')}"
+        if keys and not any(k in pre_text for k in keys):
+            snapshot = self.dump_html("accept-resume-precheck-wrong-comp")
+            raise AdapterError(f"点击前会话公司身份发生漂移，操作终止，快照: {snapshot}")
+
+        if hr_name and pre_hist.get("name"):
+            pre_hr = str(pre_hist.get("name", "")).strip()
+            if hr_name.strip() not in pre_hr and pre_hr not in hr_name.strip():
+                snapshot = self.dump_html("accept-resume-precheck-wrong-hr")
+                raise AdapterError(f"点击前会话 HR 身份发生漂移，操作终止，快照: {snapshot}")
+
+        precheck = self.detect_resume_request(company=company, hr_name=current_hr or (hr_name or ""))
         if not precheck.get("ok"):
             snapshot = self.dump_html("accept-resume-precheck-fail")
             raise AdapterError(f"点击前页面结构发生变化或读取失败: {precheck.get('message')}，快照: {snapshot}")
+
         precheck_cards = precheck.get("cards", [])
         if not precheck_cards:
             snapshot = self.dump_html("accept-resume-card-disappeared")
             raise AdapterError(f"点击前简历请求卡片已在页面消失，操作终止，快照: {snapshot}")
 
-        precheck_target = precheck_cards[-1]
-        if precheck_target.get("is_already_accepted"):
+        # 严格按卡片指纹寻找目标同一张卡片（绝不盲目依靠 cards[-1]）
+        matched = [c for c in precheck_cards if _get_fp(c) == target_fingerprint]
+        if not matched:
+            snapshot = self.dump_html("accept-resume-card-mismatch")
+            raise AdapterError(f"点击前未在页面中匹配到同一张简历请求卡片（卡片指纹不一致或已消失），操作终止，快照: {snapshot}")
+
+        active_card = matched[0]
+        if active_card.get("is_already_accepted"):
             result["status"] = "already_accepted"
             result["verified"] = True
             result["note"] = "点击前二次核验证实该请求已处于已同意状态，已自动跳过"
             return result
 
-        if not precheck_target.get("has_agree_button"):
+        if not active_card.get("has_agree_button"):
             snapshot = self.dump_html("accept-resume-agree-disappeared")
             raise AdapterError(f"点击前同意按钮已消失或失效，操作终止，快照: {snapshot}")
 
-        # 确认目标按钮选择器属于目标卡片
-        active_btn_selector = precheck_target.get("button_selector") or btn_selector
-        active_btn_text = (precheck_target.get("agree_button_text") or btn_text).strip()
+        # 重新核验按钮选择器与文案
+        active_btn_selector = active_card.get("button_selector") or btn_selector
+        active_btn_text = (active_card.get("agree_button_text") or btn_text).strip()
         if any(bad in active_btn_text for bad in forbidden_keywords):
-            raise AdapterError(f"点击前按钮状态变异包含拒绝/取消语义，操作终止")
+            snapshot = self.dump_html("accept-resume-precheck-bad-btn")
+            raise AdapterError(f"点击前按钮状态变异包含拒绝/取消语义（『{active_btn_text}』），操作终止，快照: {snapshot}")
+        if not any(good in active_btn_text for good in safe_agree_keywords):
+            snapshot = self.dump_html("accept-resume-precheck-unknown-btn")
+            raise AdapterError(f"点击前按钮文案发生变动（『{active_btn_text}』），非已知安全文案，操作终止，快照: {snapshot}")
 
-        # 准则 9：执行点击（使用 CSS 选择器严格调用 click_selector）
+        # 准则 8：执行点击（使用 CSS 选择器严格调用 click_selector）
         click_res = self.click_selector(active_btn_selector)
         if not click_res.get("clicked"):
             snapshot = self.dump_html("accept-resume-click-fail")
             raise AdapterError(f"点击同意按钮失败: {click_res.get('error')}，快照: {snapshot}")
 
-        # 准则 10：点击后重新读取页面确认真实状态（等待 1.5s 后核验状态变为已同意）
+        # 准则 9：点击后重新读取页面确认真实状态（等待 1.5s 后核验状态变为已同意）
         time.sleep(1.5)
-        verify_detect = self.detect_resume_request()
+        verify_detect = self.detect_resume_request(company=company, hr_name=current_hr or (hr_name or ""))
         if not verify_detect.get("ok"):
-            # 页面结构发生异常，立即安全停止
             result["status"] = "clicked-unverified"
             result["verified"] = False
             result["note"] = f"点击后页面结构发生变化或回读失败 ({verify_detect.get('message')})，已停止后续操作并标记为未确认状态"
             return result
 
-        new_cards = verify_detect.get("cards", [])
+        # 重新查找目标卡片验证真实状态
+        new_matched = [c for c in verify_detect.get("cards", []) if _get_fp(c) == target_fingerprint]
         verified = False
-        if new_cards:
-            latest = new_cards[-1]
+        if new_matched:
+            latest = new_matched[0]
             if latest.get("is_already_accepted") or not latest.get("has_agree_button"):
                 verified = True
+        else:
+            # 卡片在同意后可能转变为普通系统消息
+            verified = True
 
         result["status"] = "accepted" if verified else "clicked-unverified"
         result["verified"] = verified

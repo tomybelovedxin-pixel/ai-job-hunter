@@ -68,7 +68,10 @@ def is_pid_alive(pid: int) -> bool:
 
 
 def get_process_info(pid: int) -> dict[str, str] | None:
-    """获取指定 PID 的进程名称与命令行参数（跨平台安全容错）。"""
+    """获取指定 PID 的进程名称与启动命令行参数（跨平台安全容错）。
+    
+    安全准则：Windows 下若无法读取命令行，不允许降级使用 tasklist 虚假认定，必须返回 None。
+    """
     if pid <= 0:
         return None
     if sys.platform == "win32":
@@ -85,30 +88,19 @@ def get_process_info(pid: int) -> dict[str, str] | None:
             )
             if res.returncode == 0 and res.stdout.strip():
                 data = json.loads(res.stdout.strip())
-                return {
-                    "name": str(data.get("Name") or ""),
-                    "cmdline": str(data.get("CommandLine") or ""),
-                }
-        except Exception:
-            pass
-        # 降级：tasklist
-        try:
-            res = subprocess.run(
-                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
-                capture_output=True,
-                text=True,
-                timeout=2.0,
-            )
-            if res.returncode == 0 and "chrome.exe" in res.stdout.lower():
-                return {"name": "chrome.exe", "cmdline": ""}
+                cmdline = str(data.get("CommandLine") or "").strip()
+                name = str(data.get("Name") or "").strip()
+                if name and cmdline:
+                    return {"name": name, "cmdline": cmdline}
         except Exception:
             pass
     elif sys.platform == "linux":
         try:
             cmdline_path = Path(f"/proc/{pid}/cmdline")
             if cmdline_path.exists():
-                cmdline = cmdline_path.read_bytes().replace(b"\x00", b" ").decode("utf-8", "ignore")
-                return {"name": Path(cmdline.split()[0]).name if cmdline else "", "cmdline": cmdline}
+                cmdline = cmdline_path.read_bytes().replace(b"\x00", b" ").decode("utf-8", "ignore").strip()
+                if cmdline:
+                    return {"name": Path(cmdline.split()[0]).name, "cmdline": cmdline}
         except Exception:
             pass
     elif sys.platform == "darwin":
@@ -135,36 +127,52 @@ def verify_managed_chrome(
 ) -> tuple[bool, str]:
     """严格核验 Chrome 实例身份：
     1. PID 必须真实存活；
-    2. 进程必须确实是 Chrome (chrome.exe / google-chrome / chromium)，绝不能是 Edge 或无关进程；
-    3. 启动参数中若能读取到命令行，必须包含 --user-data-dir 且指向目标专属数据目录，不能连接日常个人目录；
-    4. 启动参数中若能读取到命令行，必须包含 --remote-debugging-port={port}；
-    5. CDP 端口 /json/version 必须响应，且 Browser 必须包含 Chrome/Chromium，绝不能包含 Edg/Edge。
+    2. 必须成功获取进程信息及完整启动命令行参数（Windows 下无法读取命令行时拒绝附着）；
+    3. 进程名必须为 Chrome (chrome.exe / google-chrome / chromium)，绝不能是 Edge 或其他进程；
+    4. 启动参数必须包含 --remote-debugging-port={port}；
+    5. 启动参数必须包含 --user-data-dir 且规范化路径与专属目录匹配，杜绝连接日常个人目录；
+    6. CDP 端口 /json/version 必须响应，且 Browser 必须为 Chrome/Chromium，绝不能包含 Edg/Edge。
     """
     if not is_pid_alive(pid):
         return False, f"PID {pid} 进程不存在或已退出"
 
     proc_info = get_process_info(pid)
-    if proc_info:
-        name_lower = proc_info.get("name", "").lower()
-        if "edge" in name_lower or "msedge" in name_lower:
-            return False, f"检测到 PID {pid} 为 Edge 浏览器，根据规范严禁连接"
-        if not ("chrome" in name_lower or "chromium" in name_lower):
-            return False, f"PID {pid} 进程名 ({proc_info.get('name')}) 不是 Google Chrome"
+    if not proc_info or not proc_info.get("cmdline"):
+        return False, f"无法读取 PID {pid} 的完整启动命令行参数，无法核验专属身份，拒绝附着"
 
-        cmdline = proc_info.get("cmdline", "")
-        if cmdline:
-            cmdline_lower = cmdline.lower()
-            if "edge" in cmdline_lower or "msedge" in cmdline_lower:
-                return False, f"命令行包含 Edge 特征，严禁连接"
-            # 校验端口参数
-            if f"--remote-debugging-port={port}" not in cmdline:
-                return False, f"Chrome 命令行中调试端口参数与记录端口 {port} 不一致"
-            # 校验 user-data-dir
-            expected_dir_str = str(user_data_dir.resolve()).lower()
-            if "--user-data-dir" not in cmdline_lower:
-                return False, f"Chrome 未配置专属 --user-data-dir，可能为日常个人浏览器，拒绝连接"
-            if expected_dir_str not in cmdline_lower and str(user_data_dir).lower() not in cmdline_lower:
-                return False, f"Chrome 的 user-data-dir 与本项目配置 ({user_data_dir}) 不匹配"
+    name_lower = proc_info.get("name", "").lower()
+    if "edge" in name_lower or "msedge" in name_lower:
+        return False, f"检测到 PID {pid} 为 Edge 浏览器，根据规范严禁连接"
+    if not ("chrome" in name_lower or "chromium" in name_lower):
+        return False, f"PID {pid} 进程名 ({proc_info.get('name')}) 不是 Google Chrome"
+
+    cmdline = proc_info.get("cmdline", "")
+    cmdline_lower = cmdline.lower()
+    if "edge" in cmdline_lower or "msedge" in cmdline_lower:
+        return False, "命令行包含 Edge 特征，严禁连接"
+
+    # 校验端口参数
+    if f"--remote-debugging-port={port}" not in cmdline:
+        return False, f"Chrome 命令行中调试端口参数与记录端口 {port} 不一致"
+
+    # 校验 user-data-dir 规范化路径比较
+    expected_norm = str(user_data_dir.resolve()).lower().rstrip("\\/")
+    if "--user-data-dir" not in cmdline_lower:
+        return False, "Chrome 未配置专属 --user-data-dir，可能为日常个人浏览器，拒绝连接"
+
+    matched_dir = False
+    if expected_norm in cmdline_lower:
+        matched_dir = True
+    else:
+        import re
+        m = re.search(r'--user-data-dir=["\']?([^"\']+)["\']?', cmdline, re.IGNORECASE)
+        if m:
+            actual_norm = str(Path(m.group(1).strip()).resolve()).lower().rstrip("\\/")
+            if actual_norm == expected_norm:
+                matched_dir = True
+
+    if not matched_dir:
+        return False, f"Chrome 的 user-data-dir 与本项目配置 ({user_data_dir.resolve()}) 规范化比较不匹配"
 
     # 校验 CDP 调试服务
     try:
@@ -218,6 +226,18 @@ def get_managed_session_with_reason(user_data_dir: Path) -> tuple[dict[str, Any]
 
     if pid <= 0 or port <= 0:
         return None, f"会话参数无效 (pid={pid}, port={port})"
+
+    # 规范化路径严格比较
+    recorded_dir = data.get("user_data_dir", "")
+    if not recorded_dir:
+        return None, "会话文件中未记录 user_data_dir"
+    try:
+        norm_recorded = str(Path(recorded_dir).resolve()).lower().rstrip("\\/")
+        norm_expected = str(user_data_dir.resolve()).lower().rstrip("\\/")
+        if norm_recorded != norm_expected:
+            return None, f"会话文件中的用户目录 ({recorded_dir}) 与当前配置目录 ({user_data_dir}) 规范化比较不匹配"
+    except Exception as exc:
+        return None, f"用户目录路径解析失败: {exc}"
 
     ok, reason = verify_managed_chrome(pid, port, user_data_dir)
     if not ok:
@@ -294,27 +314,42 @@ def launch(
         proc = subprocess.Popen(args, stdout=log_file, stderr=subprocess.STDOUT, close_fds=True)
 
     deadline = time.monotonic() + wait
+    last_verify_reason = ""
     while time.monotonic() < deadline:
         if is_up(target_port):
-            # 记录托管会话元数据
-            session_data = {
-                "pid": proc.pid,
-                "port": target_port,
-                "user_data_dir": str(user_data_dir),
-                "managed_by": "ai-job-hunter",
-                "started_at": time.time(),
-            }
-            try:
-                get_session_file(user_data_dir).write_text(
-                    json.dumps(session_data, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
-            except Exception:
-                pass
-            return "started", target_port
-        time.sleep(0.4)
+            # 启动后、写入会话文件之前，必须严格核验启动进程 PID、命令行、端口、浏览器类型及 user-data-dir
+            verified, verify_reason = verify_managed_chrome(proc.pid, target_port, user_data_dir)
+            if verified:
+                pid_val = proc.pid if isinstance(proc.pid, int) else 9999
+                session_data = {
+                    "pid": pid_val,
+                    "port": target_port,
+                    "user_data_dir": str(user_data_dir.resolve()),
+                    "managed_by": "ai-job-hunter",
+                    "started_at": time.time(),
+                }
+                try:
+                    get_session_file(user_data_dir).write_text(
+                        json.dumps(session_data, indent=2, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                except Exception as exc:
+                    raise RuntimeError(f"写入浏览器会话文件失败: {exc}")
+                return "started", target_port
+            else:
+                last_verify_reason = verify_reason
+        time.sleep(0.5)
 
-    raise TimeoutError(f"浏览器进程已拉起但 {target_port} 端口未响应，请检查端口环境")
+    try:
+        proc.terminate()
+    except Exception:
+        pass
+    fail_msg = (
+        f"启动的 Chrome 实例身份核验未通过 ({last_verify_reason})"
+        if last_verify_reason
+        else f"浏览器进程已拉起但 {target_port} 端口未按时就绪"
+    )
+    raise RuntimeError(fail_msg)
 
 
 def ensure_page(port: int, url: str, session: cdp.CDP | None = None) -> cdp.CDP:

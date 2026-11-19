@@ -136,6 +136,21 @@ CREATE TABLE IF NOT EXISTS settings (
     value      TEXT,
     updated_at TEXT
 );
+
+-- 简历附件请求持久化记录：跨守护进程生命周期防重复同意
+CREATE TABLE IF NOT EXISTS resume_requests (
+    fingerprint TEXT PRIMARY KEY,
+    company     TEXT NOT NULL,
+    hr_name     TEXT,
+    job         TEXT,
+    snippet     TEXT,
+    status      TEXT NOT NULL,
+    verified    INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    note        TEXT
+);
+CREATE INDEX IF NOT EXISTS resume_requests_comp_idx ON resume_requests(company, hr_name);
 """
 
 # jobs 表后续加的列：来源、有效性、去重指向、质量标记
@@ -713,6 +728,53 @@ class Store:
             (key, json.dumps(value, ensure_ascii=False), _now()),
         )
         self.conn.commit()
+
+    def record_resume_request(
+        self,
+        fingerprint: str,
+        company: str,
+        hr_name: str = "",
+        job: str = "",
+        snippet: str = "",
+        status: str = "pending",
+        verified: bool = False,
+        note: str = "",
+    ) -> None:
+        """记录或更新简历请求处理状态（持久化防重）。"""
+        now = _now()
+        self.conn.execute(
+            """INSERT INTO resume_requests (
+                   fingerprint, company, hr_name, job, snippet, status, verified, created_at, updated_at, note
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(fingerprint) DO UPDATE SET
+                   status=excluded.status,
+                   verified=excluded.verified,
+                   updated_at=excluded.updated_at,
+                   note=excluded.note""",
+            (fingerprint, company, hr_name, job, snippet, status, int(verified), now, now, note),
+        )
+        self.conn.commit()
+
+    def get_resume_request(self, fingerprint: str) -> dict[str, Any] | None:
+        """根据指纹查询简历请求记录。"""
+        row = self.conn.execute(
+            "SELECT fingerprint, company, hr_name, job, snippet, status, verified, created_at, updated_at, note FROM resume_requests WHERE fingerprint = ?",
+            (fingerprint,),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "fingerprint": row["fingerprint"],
+            "company": row["company"],
+            "hr_name": row["hr_name"],
+            "job": row["job"],
+            "snippet": row["snippet"],
+            "status": row["status"],
+            "verified": bool(row["verified"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "note": row["note"],
+        }
 
     def close(self) -> None:
         self.conn.close()

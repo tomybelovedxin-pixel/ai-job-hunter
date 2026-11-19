@@ -226,6 +226,73 @@ class TestStandaloneDeployment(unittest.TestCase):
         # accept_resume_request 调用计数依然为 1，未发生重复点击！
         self.assertEqual(mock_adapter.accept_resume_request.call_count, 1)
 
+    def test_clicked_unverified_persists_across_daemon_restart(self):
+        """测试 clicked-unverified 状态在守护进程完全重启后依然持久化生效，绝不重复点击。"""
+        from jobagent.store import Store
+        db_path = Path(self.tmp_dir) / "persistent_jobs.sqlite"
+        store1 = Store(db_path)
+
+        mock_adapter = MagicMock()
+        mock_adapter.check_block.return_value = None
+        mock_adapter.conversation_history.return_value = {
+            "pane": True,
+            "company": "字节跳动",
+            "name": "李HR",
+            "job": "架构师",
+        }
+        mock_adapter.detect_resume_request.return_value = {
+            "ok": True,
+            "cards": [{
+                "has_agree_button": True,
+                "is_already_accepted": False,
+                "agree_button_text": "同意发送",
+                "snippet": "请提供一份完整附件简历",
+                "fingerprint": "bytedance_fp_001",
+            }],
+        }
+        mock_adapter.accept_resume_request.return_value = {
+            "status": "clicked-unverified",
+            "verified": False,
+            "note": "点击后回读未确认状态",
+        }
+
+        # 1. 运行第一个守护进程实例，触发点击，状态被持久化进 SQLite
+        daemon1 = ChatListener(
+            adapter=mock_adapter,
+            store=store1,
+            auto_accept=True,
+            verbose=False,
+        )
+        rep1 = daemon1.step()
+        self.assertEqual(rep1["resume_status"], "pending_request")
+        self.assertEqual(mock_adapter.accept_resume_request.call_count, 1)
+
+        # 验证 SQLite 库中已落盘
+        saved = store1.get_resume_request("bytedance_fp_001")
+        self.assertIsNotNone(saved)
+        self.assertEqual(saved["status"], "clicked-unverified")
+        self.assertFalse(saved["verified"])
+
+        # 2. 模拟守护进程重启：彻底销毁旧实例，重新建立全新的 Store 与 Listener 实例（内存状态重置为全新）
+        del daemon1
+        del store1
+
+        store2 = Store(db_path)
+        daemon2 = ChatListener(
+            adapter=mock_adapter,
+            store=store2,
+            auto_accept=True,
+            verbose=False,
+        )
+        self.assertEqual(len(daemon2.unverified_or_processed), 0)
+
+        # 3. 新守护进程执行单步核验
+        rep2 = daemon2.step()
+        self.assertEqual(rep2["resume_status"], "already_attempted")
+        self.assertEqual(rep2["db_status"], "clicked-unverified")
+        # 严格验证：跨进程重启后，仍然没有产生重复点击调用！调用次数依然维持为 1！
+        self.assertEqual(mock_adapter.accept_resume_request.call_count, 1)
+
     def test_m_zero_hardcoded_developer_paths(self):
         """M. 全仓库扫描：Python、BAT、PS1、MD、TOML、JSON 代码中 0 个 C:\\Users\\ASUS 硬编码路径。"""
         project_root = Path(__file__).resolve().parent.parent

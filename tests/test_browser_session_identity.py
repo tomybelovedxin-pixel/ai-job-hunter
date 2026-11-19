@@ -138,6 +138,58 @@ class TestBrowserSessionIdentity(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("不一致", reason)
 
+    @patch("jobagent.browser.is_pid_alive", return_value=True)
+    @patch("jobagent.browser.get_process_info", return_value=None)
+    def test_verify_managed_chrome_cmdline_read_failure(self, _mock_proc, _mock_alive):
+        """Windows 下无法读取命令行时（例如普通 tasklist 无法获取完整参数），必须拒绝附着。"""
+        ok, reason = verify_managed_chrome(1234, 9222, self.user_data_dir)
+        self.assertFalse(ok)
+        self.assertIn("无法读取", reason)
+
+    @patch("jobagent.browser.is_pid_alive", return_value=True)
+    @patch("jobagent.browser.get_process_info", return_value={"name": "chrome.exe", "cmdline": ""})
+    def test_verify_managed_chrome_empty_cmdline_rejected(self, _mock_proc, _mock_alive):
+        """启动命令行参数为空时，无法核验专属参数，必须坚决拒绝附着。"""
+        ok, reason = verify_managed_chrome(1234, 9222, self.user_data_dir)
+        self.assertFalse(ok)
+        self.assertIn("无法读取", reason)
+
+    def test_get_managed_session_directory_mismatch_rejected(self):
+        """会话文件中记录的 user_data_dir 与当前配置目录不一致时，严格拒绝复用。"""
+        other_dir = Path(self.tmp_dir) / "other_profile"
+        other_dir.mkdir(parents=True, exist_ok=True)
+        session_data = {
+            "pid": 9999,
+            "port": 9222,
+            "user_data_dir": str(other_dir),
+            "managed_by": "ai-job-hunter",
+        }
+        self.session_file.write_text(json.dumps(session_data), encoding="utf-8")
+
+        res, reason = get_managed_session_with_reason(self.user_data_dir)
+        self.assertIsNone(res)
+        self.assertIn("不匹配", reason)
+
+    @patch("subprocess.Popen")
+    @patch("jobagent.browser.find_browser", return_value="mock_chrome.exe")
+    @patch("jobagent.browser.is_up", return_value=True)
+    @patch("jobagent.browser.verify_managed_chrome", return_value=(False, "模拟身份校验未通过"))
+    def test_launch_failure_does_not_write_session_file(self, _mock_ver, _mock_is_up, _mock_find, mock_popen):
+        """新启动 Chrome 后身份核验失败时，绝不写入有效会话记录，并安全终止进程。"""
+        mock_proc = MagicMock()
+        mock_proc.pid = 8888
+        mock_popen.return_value = mock_proc
+
+        from jobagent.browser import launch
+        with self.assertRaises(RuntimeError) as exc_info:
+            launch(self.user_data_dir, port=9222, wait=0.6)
+
+        self.assertIn("身份核验未通过", str(exc_info.exception))
+        # 严格验证：会话文件绝对未被创建/写入！
+        self.assertFalse(self.session_file.exists())
+        # 严格验证：进程被安全终止
+        mock_proc.terminate.assert_called()
+
     def test_get_managed_session_corrupt_or_missing(self):
         """会话文件不存在或损坏时返回 None。"""
         # 文件不存在
