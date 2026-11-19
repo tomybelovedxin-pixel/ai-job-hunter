@@ -34,6 +34,7 @@ class ChatListener:
         self.max_rounds = max_rounds
         self.verbose = verbose
         self.session: cdp.CDP | None = None
+        self.unverified_or_processed: set[str] = set()
 
     def log(self, message: str) -> None:
         if self.verbose:
@@ -41,17 +42,15 @@ class ChatListener:
             print(f"[{ts}] [监听守护] {message}", flush=True)
 
     def connect(self) -> None:
-        # 优先复用本项目托管的 Chrome 实例端口
+        # 严格核验本项目托管的 Chrome 实例身份，防止误连日常浏览器
         managed = browser.get_managed_session(self.config.browser_user_data_dir)
-        port = managed["port"] if managed else self.config.browser_port
-        if not browser.is_up(port):
-            self.log(f"正在拉起受托管的 Chrome 实例 (端口: {port})...")
-            _, port = browser.launch(
-                self.config.browser_user_data_dir,
-                port=port,
-                url="https://www.zhipin.com/web/geek/chat",
-                browser_path=self.config.browser_exe or None,
+        if not managed:
+            raise RuntimeError(
+                "未检测到受项目托管的专属求职 Chrome 实例，或会话身份核验未通过！\n"
+                "安全机制已阻断连接，防止附着到无关浏览器或日常个人浏览器。\n"
+                "请运行 run_windows.bat 选项 1 或执行 python -m jobagent browser 启动专属求职浏览器。"
             )
+        port = int(managed["port"])
         self.session = cdp.attach(port, url_contains="zhipin.com")
         self.adapter = BossAdapter(
             self.session, dump_dir=self.config.dump_dir, verbose=self.verbose
@@ -98,29 +97,35 @@ class ChatListener:
             if latest.get("is_already_accepted"):
                 event["resume_status"] = "already_accepted"
             elif latest.get("has_agree_button"):
-                event["resume_status"] = "pending_request"
-                event["button_text"] = latest.get("agree_button_text")
-
-                if self.auto_accept:
-                    self.log(f"检测到 HR「{name}」发起简历附件请求，正在执行安全同意...")
-                    action_res = self.adapter.accept_resume_request(
-                        company=company, hr_name=name, dry_run=False
-                    )
-                    event["action_result"] = action_res
-                    if action_res.get("verified"):
-                        self.log(f"已成功同意并发送附件简历给 {company} - {name}！")
-                        self.store.log_event(
-                            "accept_resume",
-                            company,
-                            f"自动同意附件简历: {name} ({job}), 校验通过",
-                        )
-                    else:
-                        self.log(f"点击完成但状态待确认: {action_res.get('note')}")
+                card_key = f"{company}::{name}::{latest.get('snippet', '')[:60]}"
+                if card_key in self.unverified_or_processed:
+                    event["resume_status"] = "already_attempted"
+                    self.log(f"卡片【{company} - {name}】此前已执行过处理或标记为未核实状态，为防重复点击已自动跳过")
                 else:
-                    self.log(
-                        f"提示：检测到 HR「{name}」索要附件简历卡片！"
-                        f"(当前 auto_accept_resume=false，已保持安全只读，可在 config.toml 中开启)"
-                    )
+                    event["resume_status"] = "pending_request"
+                    event["button_text"] = latest.get("agree_button_text")
+
+                    if self.auto_accept:
+                        self.log(f"检测到 HR「{name}」发起简历附件请求，正在执行安全同意...")
+                        self.unverified_or_processed.add(card_key)
+                        action_res = self.adapter.accept_resume_request(
+                            company=company, hr_name=name, dry_run=False
+                        )
+                        event["action_result"] = action_res
+                        if action_res.get("verified"):
+                            self.log(f"已成功同意并发送附件简历给 {company} - {name}！")
+                            self.store.log_event(
+                                "accept_resume",
+                                company,
+                                f"自动同意附件简历: {name} ({job}), 校验通过",
+                            )
+                        else:
+                            self.log(f"点击完成但状态待确认: {action_res.get('note')} (已自动防重)")
+                    else:
+                        self.log(
+                            f"提示：检测到 HR「{name}」索要附件简历卡片！"
+                            f"(当前 auto_accept_resume=false，已保持安全只读，可在 config.toml 中开启)"
+                        )
         return event
 
     def run_forever(

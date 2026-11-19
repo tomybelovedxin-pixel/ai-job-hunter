@@ -24,9 +24,8 @@ def get_default_data_dir() -> Path:
     """获取当前使用者的系统标准独立数据目录，完全脱离源码目录，多用户完全隔离。
 
     优先级：
-    1. 环境变量 AI_JOB_HUNTER_DATA_DIR
-    2. 项目本地优先（若项目根目录下存在 config.toml 或 data/ 目录）
-    3. 操作系统标准用户目录：
+    1. 显式环境变量 AI_JOB_HUNTER_DATA_DIR（支持高级使用者自定义或便携模式）
+    2. 操作系统标准用户独立数据目录：
        - Windows: %LOCALAPPDATA%\\AIJobHunter
        - macOS: ~/Library/Application Support/AIJobHunter
        - Linux: $XDG_DATA_HOME/ai-job-hunter 或 ~/.local/share/ai-job-hunter
@@ -34,10 +33,6 @@ def get_default_data_dir() -> Path:
     env_dir = os.environ.get("AI_JOB_HUNTER_DATA_DIR")
     if env_dir:
         return Path(env_dir).expanduser().resolve()
-
-    # 若项目目录内已显式配置了 config.toml，支持便携模式
-    if (ROOT / "config.toml").exists():
-        return ROOT
 
     if sys.platform == "win32":
         local_app_data = os.environ.get("LOCALAPPDATA")
@@ -93,10 +88,6 @@ def init_user_data(data_dir: Path | None = None) -> tuple[Path, list[str]]:
 
 def get_default_config_path() -> Path:
     data_dir = get_default_data_dir()
-    if (data_dir / "config.toml").exists():
-        return data_dir / "config.toml"
-    if (ROOT / "config.toml").exists():
-        return ROOT / "config.toml"
     return data_dir / "config.toml"
 
 
@@ -235,11 +226,7 @@ def load(path: str | Path | None = None) -> Config:
         target = Path(val or default)
         if target.is_absolute():
             return target
-        if (data_dir / target).exists():
-            return data_dir / target
-        if (ROOT / target).exists():
-            return ROOT / target
-        return data_dir / target
+        return (data_dir / target).resolve()
 
     profile_path = _resolve(raw.get("profile", {}).get("path", ""), "profile.json")
     master_resume_path = _resolve(raw.get("resume", {}).get("master_path", ""), "master_resume.json")

@@ -6,8 +6,10 @@ import json
 import os
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from . import cdp
 
@@ -46,10 +48,12 @@ def find_browser(explicit: str | None = None) -> str:
 
 
 def is_up(port: int = DEFAULT_PORT, timeout: float = 1.0) -> bool:
+    """检查指定端口是否为正在响应的 Google Chrome CDP 调试服务（排除 Edge 等）。"""
     try:
-        cdp.http_json(port, "/json/version", timeout=timeout)
-        return True
-    except OSError:
+        ver = cdp.http_json(port, "/json/version", timeout=timeout)
+        b = str(ver.get("Browser", "")).lower()
+        return bool("chrome" in b or "chromium" in b) and not ("edg" in b or "edge" in b)
+    except (OSError, Exception):
         return False
 
 
@@ -61,6 +65,120 @@ def is_pid_alive(pid: int) -> bool:
         return True
     except OSError:
         return False
+
+
+def get_process_info(pid: int) -> dict[str, str] | None:
+    """获取指定 PID 的进程名称与命令行参数（跨平台安全容错）。"""
+    if pid <= 0:
+        return None
+    if sys.platform == "win32":
+        try:
+            ps_cmd = (
+                f"$p = Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}'; "
+                "if ($p) { @{Name=$p.Name; CommandLine=$p.CommandLine} | ConvertTo-Json -Compress }"
+            )
+            res = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_cmd],
+                capture_output=True,
+                text=True,
+                timeout=3.0,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                data = json.loads(res.stdout.strip())
+                return {
+                    "name": str(data.get("Name") or ""),
+                    "cmdline": str(data.get("CommandLine") or ""),
+                }
+        except Exception:
+            pass
+        # 降级：tasklist
+        try:
+            res = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+            )
+            if res.returncode == 0 and "chrome.exe" in res.stdout.lower():
+                return {"name": "chrome.exe", "cmdline": ""}
+        except Exception:
+            pass
+    elif sys.platform == "linux":
+        try:
+            cmdline_path = Path(f"/proc/{pid}/cmdline")
+            if cmdline_path.exists():
+                cmdline = cmdline_path.read_bytes().replace(b"\x00", b" ").decode("utf-8", "ignore")
+                return {"name": Path(cmdline.split()[0]).name if cmdline else "", "cmdline": cmdline}
+        except Exception:
+            pass
+    elif sys.platform == "darwin":
+        try:
+            res = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "command="],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                cmdline = res.stdout.strip()
+                return {"name": "Google Chrome", "cmdline": cmdline}
+        except Exception:
+            pass
+    return None
+
+
+def verify_managed_chrome(
+    pid: int,
+    port: int,
+    user_data_dir: Path,
+    timeout: float = 1.5,
+) -> tuple[bool, str]:
+    """严格核验 Chrome 实例身份：
+    1. PID 必须真实存活；
+    2. 进程必须确实是 Chrome (chrome.exe / google-chrome / chromium)，绝不能是 Edge 或无关进程；
+    3. 启动参数中若能读取到命令行，必须包含 --user-data-dir 且指向目标专属数据目录，不能连接日常个人目录；
+    4. 启动参数中若能读取到命令行，必须包含 --remote-debugging-port={port}；
+    5. CDP 端口 /json/version 必须响应，且 Browser 必须包含 Chrome/Chromium，绝不能包含 Edg/Edge。
+    """
+    if not is_pid_alive(pid):
+        return False, f"PID {pid} 进程不存在或已退出"
+
+    proc_info = get_process_info(pid)
+    if proc_info:
+        name_lower = proc_info.get("name", "").lower()
+        if "edge" in name_lower or "msedge" in name_lower:
+            return False, f"检测到 PID {pid} 为 Edge 浏览器，根据规范严禁连接"
+        if not ("chrome" in name_lower or "chromium" in name_lower):
+            return False, f"PID {pid} 进程名 ({proc_info.get('name')}) 不是 Google Chrome"
+
+        cmdline = proc_info.get("cmdline", "")
+        if cmdline:
+            cmdline_lower = cmdline.lower()
+            if "edge" in cmdline_lower or "msedge" in cmdline_lower:
+                return False, f"命令行包含 Edge 特征，严禁连接"
+            # 校验端口参数
+            if f"--remote-debugging-port={port}" not in cmdline:
+                return False, f"Chrome 命令行中调试端口参数与记录端口 {port} 不一致"
+            # 校验 user-data-dir
+            expected_dir_str = str(user_data_dir.resolve()).lower()
+            if "--user-data-dir" not in cmdline_lower:
+                return False, f"Chrome 未配置专属 --user-data-dir，可能为日常个人浏览器，拒绝连接"
+            if expected_dir_str not in cmdline_lower and str(user_data_dir).lower() not in cmdline_lower:
+                return False, f"Chrome 的 user-data-dir 与本项目配置 ({user_data_dir}) 不匹配"
+
+    # 校验 CDP 调试服务
+    try:
+        ver_info = cdp.http_json(port, "/json/version", timeout=timeout)
+    except Exception as exc:
+        return False, f"CDP 调试端口 {port} 无法连接或无响应 ({exc})"
+
+    browser_desc = str(ver_info.get("Browser", "")).lower()
+    if "edg" in browser_desc or "edge" in browser_desc:
+        return False, f"CDP 服务响应显示为 Edge 浏览器 ({ver_info.get('Browser')})，拒绝连接"
+    if not ("chrome" in browser_desc or "chromium" in browser_desc):
+        return False, f"CDP 服务响应非 Chrome ({ver_info.get('Browser')})，拒绝连接"
+
+    return True, "Chrome 身份核验通过"
 
 
 def find_free_port(start_port: int = DEFAULT_PORT) -> int:
@@ -79,20 +197,39 @@ def get_session_file(user_data_dir: Path) -> Path:
     return user_data_dir.parent / "browser_session.json"
 
 
-def get_managed_session(user_data_dir: Path) -> dict[str, Any] | None:
-    """读取本项目管理启动的 Chrome 运行信息。"""
+def get_managed_session_with_reason(user_data_dir: Path) -> tuple[dict[str, Any] | None, str]:
+    """读取并严格核验本项目管理启动的 Chrome 运行信息，返回 (session_dict, reason)。"""
     session_file = get_session_file(user_data_dir)
     if not session_file.exists():
-        return None
+        return None, f"会话文件不存在: {session_file}"
     try:
         data = json.loads(session_file.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return None, f"会话文件损坏无法解析: {exc}"
+
+    if data.get("managed_by") != "ai-job-hunter":
+        return None, "会话文件未标识 managed_by='ai-job-hunter'"
+
+    try:
         pid = int(data.get("pid", 0))
         port = int(data.get("port", 0))
-        if pid and is_pid_alive(pid) and is_up(port):
-            return data
-    except Exception:
-        pass
-    return None
+    except (TypeError, ValueError):
+        return None, "会话文件 PID 或端口格式无效"
+
+    if pid <= 0 or port <= 0:
+        return None, f"会话参数无效 (pid={pid}, port={port})"
+
+    ok, reason = verify_managed_chrome(pid, port, user_data_dir)
+    if not ok:
+        return None, reason
+
+    return data, "核验通过"
+
+
+def get_managed_session(user_data_dir: Path) -> dict[str, Any] | None:
+    """读取并核验受项目管理的 Chrome 运行信息，核验不通过返回 None。"""
+    session, _ = get_managed_session_with_reason(user_data_dir)
+    return session
 
 
 def build_chrome_command(

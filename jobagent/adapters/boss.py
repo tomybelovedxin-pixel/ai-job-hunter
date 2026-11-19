@@ -425,27 +425,82 @@ class BossAdapter(Adapter):
 
     CHAT_URL = "https://www.zhipin.com/web/geek/chat"
 
-    def click_expr(self, find_expr: str, *, timeout: float = 5.0) -> bool:
-        """点元素：mousedown / mouseup / click 三连冒泡派发。
+    def click_expr(self, find_expr: str, *, timeout: float = 5.0) -> dict[str, Any]:
+        """执行 JavaScript 元素表达式并点击该元素（mousedown / mouseup / click 三连冒泡派发）。
 
-        2026-10-13 实测（两种方式都试过，结论明确）：
+        参数契约：
+        find_expr 必须是一段返回 DOM Element（或 null）的 JS 表达式代码。
+        严禁传入 CSS 选择器字符串（CSS 选择器请使用 click_selector）。
 
-        - CDP 真实鼠标事件 `Input.dispatchMouseEvent` 在这个页面上**不触发**选中，
-          点了之后消息面板一直是"与您进行过沟通的 Boss 都会在左侧列表中显示"；
-        - 合成三连事件、而且必须点在行内的 `.text`（正文）元素上才有效，
-          直接点外层 `li` 或 `element.click()` 都不行。
-
-        find_expr 是一段返回元素（或 null）的 JS 表达式。
+        返回统一结构：
+        {"ok": bool, "clicked": bool, "error": str | None}
         """
-        return bool(self.session.evaluate(
-            "(() => { const el = (" + find_expr + "); if (!el) return '';"
-            " for (const t of ['mousedown', 'mouseup', 'click']) {"
-            "   el.dispatchEvent(new MouseEvent(t,"
-            "     {bubbles: true, cancelable: true, view: window})); }"
-            " return 'ok'; })()",
-            await_promise=False,
-            timeout=timeout,
-        ))
+        js = (
+            "(() => {"
+            "  try {"
+            "    const el = (" + find_expr + ");"
+            "    if (!el) return JSON.stringify({ok: false, clicked: false, error: '未找到目标元素 (null)'});"
+            "    if (!(el instanceof Element)) {"
+            "      return JSON.stringify({ok: false, clicked: false, error: '表达式返回结果不是 DOM Element (类型: ' + typeof el + ')'});"
+            "    }"
+            "    for (const t of ['mousedown', 'mouseup', 'click']) {"
+            "      el.dispatchEvent(new MouseEvent(t, {bubbles: true, cancelable: true, view: window}));"
+            "    }"
+            "    return JSON.stringify({ok: true, clicked: true, error: null});"
+            "  } catch (err) {"
+            "    return JSON.stringify({ok: false, clicked: false, error: 'JS表达式执行异常: ' + (err.message || String(err))});"
+            "  }"
+            "})()"
+        )
+        try:
+            raw = self.session.evaluate(js, await_promise=False, timeout=timeout)
+            if isinstance(raw, dict):
+                return raw
+            if isinstance(raw, str) and raw.startswith("{"):
+                return json.loads(raw)
+            return {"ok": bool(raw), "clicked": bool(raw), "error": None if raw else "未获得有效执行响应"}
+        except Exception as exc:
+            return {"ok": False, "clicked": False, "error": f"CDP 执行失败: {exc}"}
+
+    def click_selector(self, selector: str, *, timeout: float = 5.0) -> dict[str, Any]:
+        """使用 CSS 选择器定位元素并点击该元素（mousedown / mouseup / click 三连冒泡派发）。
+
+        参数契约：
+        selector 必须是标准的 CSS 选择器字符串。
+        严禁传入 JS 表达式代码。
+
+        返回统一结构：
+        {"ok": bool, "clicked": bool, "error": str | None}
+        """
+        if not isinstance(selector, str) or not selector.strip():
+            return {"ok": False, "clicked": False, "error": "CSS 选择器不能为空"}
+        sel_json = json.dumps(selector.strip(), ensure_ascii=False)
+        js = (
+            "(() => {"
+            "  try {"
+            f"    const el = document.querySelector({sel_json});"
+            "    if (!el) return JSON.stringify({ok: false, clicked: false, error: '未找到匹配选择器的元素: ' + " + sel_json + "});"
+            "    if (!(el instanceof Element)) {"
+            "      return JSON.stringify({ok: false, clicked: false, error: '选择器结果不是有效 DOM Element'});"
+            "    }"
+            "    for (const t of ['mousedown', 'mouseup', 'click']) {"
+            "      el.dispatchEvent(new MouseEvent(t, {bubbles: true, cancelable: true, view: window}));"
+            "    }"
+            "    return JSON.stringify({ok: true, clicked: true, error: null});"
+            "  } catch (err) {"
+            "    return JSON.stringify({ok: false, clicked: false, error: 'CSS选择器语法无效或DOM查询异常: ' + (err.message || String(err))});"
+            "  }"
+            "})()"
+        )
+        try:
+            raw = self.session.evaluate(js, await_promise=False, timeout=timeout)
+            if isinstance(raw, dict):
+                return raw
+            if isinstance(raw, str) and raw.startswith("{"):
+                return json.loads(raw)
+            return {"ok": bool(raw), "clicked": bool(raw), "error": None if raw else "未获得有效执行响应"}
+        except Exception as exc:
+            return {"ok": False, "clicked": False, "error": f"CDP 执行失败: {exc}"}
 
     @staticmethod
     def _rows_expr() -> str:
@@ -920,14 +975,24 @@ class BossAdapter(Adapter):
             result["note"] = "该请求此前已经同意并发送过附件简历，已自动防重跳过"
             return result
 
-        # 准则 6：防点错按钮，严格校验按钮存在且非“拒绝”
+        # 准则 6：防点错按钮，严格校验按钮存在且明确为同意文案，严禁点击拒绝/取消/关闭
         if not target_card.get("has_agree_button"):
             snapshot = self.dump_html("accept-resume-nobtn")
             raise AdapterError(f"识别到简历请求但未定位到安全同意按钮（可能已被处理或结构变动），快照: {snapshot}")
 
-        btn_selector = target_card["button_selector"]
-        btn_text = target_card["agree_button_text"]
+        btn_selector = target_card.get("button_selector") or ""
+        btn_text = (target_card.get("agree_button_text") or "").strip()
         result["button_text"] = btn_text
+
+        # 按钮文本安全校验
+        safe_agree_keywords = ("同意", "发送附件", "立即发送", "发送")
+        forbidden_keywords = ("拒绝", "不合适", "取消", "关闭")
+        if any(bad in btn_text for bad in forbidden_keywords):
+            snapshot = self.dump_html("accept-resume-forbidden-btn")
+            raise AdapterError(f"严禁点击包含拒绝/取消文案的按钮（识别为『{btn_text}』），快照: {snapshot}")
+        if not any(good in btn_text for good in safe_agree_keywords):
+            snapshot = self.dump_html("accept-resume-unknown-btn")
+            raise AdapterError(f"按钮文案『{btn_text}』未匹配已知安全同意文案，已拒绝点击，快照: {snapshot}")
 
         # 准则 7：Dry-run 保护
         if dry_run:
@@ -935,15 +1000,49 @@ class BossAdapter(Adapter):
             result["note"] = f"已成功识别到简历请求卡片与同意按钮『{btn_text}』；dry_run 模式未实际点击"
             return result
 
-        # 准则 8：执行点击并检查结果
-        click_res = self.click_expr(btn_selector)
+        # 准则 8：点击前二次重新核验目标卡片与按钮存在性（防页面异步刷新或卡片瞬时消失）
+        precheck = self.detect_resume_request()
+        if not precheck.get("ok"):
+            snapshot = self.dump_html("accept-resume-precheck-fail")
+            raise AdapterError(f"点击前页面结构发生变化或读取失败: {precheck.get('message')}，快照: {snapshot}")
+        precheck_cards = precheck.get("cards", [])
+        if not precheck_cards:
+            snapshot = self.dump_html("accept-resume-card-disappeared")
+            raise AdapterError(f"点击前简历请求卡片已在页面消失，操作终止，快照: {snapshot}")
+
+        precheck_target = precheck_cards[-1]
+        if precheck_target.get("is_already_accepted"):
+            result["status"] = "already_accepted"
+            result["verified"] = True
+            result["note"] = "点击前二次核验证实该请求已处于已同意状态，已自动跳过"
+            return result
+
+        if not precheck_target.get("has_agree_button"):
+            snapshot = self.dump_html("accept-resume-agree-disappeared")
+            raise AdapterError(f"点击前同意按钮已消失或失效，操作终止，快照: {snapshot}")
+
+        # 确认目标按钮选择器属于目标卡片
+        active_btn_selector = precheck_target.get("button_selector") or btn_selector
+        active_btn_text = (precheck_target.get("agree_button_text") or btn_text).strip()
+        if any(bad in active_btn_text for bad in forbidden_keywords):
+            raise AdapterError(f"点击前按钮状态变异包含拒绝/取消语义，操作终止")
+
+        # 准则 9：执行点击（使用 CSS 选择器严格调用 click_selector）
+        click_res = self.click_selector(active_btn_selector)
         if not click_res.get("clicked"):
             snapshot = self.dump_html("accept-resume-click-fail")
-            raise AdapterError(f"点击同意按钮失败，快照: {snapshot}")
+            raise AdapterError(f"点击同意按钮失败: {click_res.get('error')}，快照: {snapshot}")
 
-        # 准则 9：回读确认真实结果（等待 1.5s 后核验状态变为已同意）
+        # 准则 10：点击后重新读取页面确认真实状态（等待 1.5s 后核验状态变为已同意）
         time.sleep(1.5)
         verify_detect = self.detect_resume_request()
+        if not verify_detect.get("ok"):
+            # 页面结构发生异常，立即安全停止
+            result["status"] = "clicked-unverified"
+            result["verified"] = False
+            result["note"] = f"点击后页面结构发生变化或回读失败 ({verify_detect.get('message')})，已停止后续操作并标记为未确认状态"
+            return result
+
         new_cards = verify_detect.get("cards", [])
         verified = False
         if new_cards:
@@ -953,5 +1052,9 @@ class BossAdapter(Adapter):
 
         result["status"] = "accepted" if verified else "clicked-unverified"
         result["verified"] = verified
-        result["note"] = "已同意发送简历附件并通过状态校验" if verified else "已执行点击但未能确证页面状态更新"
+        result["note"] = (
+            "已同意发送简历附件并通过状态校验"
+            if verified
+            else "已执行点击但未能确证页面状态更新，已安全标记为未确认状态，防止重复点击"
+        )
         return result

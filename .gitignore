@@ -1,8 +1,14 @@
 # 绝对隐私保护：忽略所有个人数据、真实简历与联系记录
 profile.json
 master_resume.json
+config.toml
+browser_session.json
 COMPANY_CONTACT_HISTORY.md
 evidence_claims.json
+
+# 本地运行时生成与临时文件
+dump/
+report.md
 
 # 浏览器会话与登录凭证（绝对禁止上传）
 data/

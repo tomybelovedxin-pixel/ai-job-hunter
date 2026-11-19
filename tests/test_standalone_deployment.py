@@ -151,6 +151,81 @@ class TestStandaloneDeployment(unittest.TestCase):
         )
         mock_store.log_event.assert_called_once()
 
+    def test_data_dir_isolation_no_root_fallback(self):
+        """验证个人资料、简历、数据库严格在 data_dir 内解析，禁止隐式回退到源码 ROOT。"""
+        fake_user_dir = Path(self.tmp_dir) / "appdata_user"
+        fake_user_dir.mkdir(parents=True, exist_ok=True)
+        init_user_data(fake_user_dir)
+
+        cfg_file = fake_user_dir / "config.toml"
+        cfg = load(cfg_file)
+
+        # 严格断言全部关键用户文件必须在独立数据目录内
+        self.assertEqual(cfg.data_dir.resolve(), fake_user_dir.resolve())
+        self.assertEqual(cfg.profile_path.resolve(), (fake_user_dir / "profile.json").resolve())
+        self.assertEqual(cfg.master_resume_path.resolve(), (fake_user_dir / "master_resume.json").resolve())
+        self.assertEqual(cfg.db_path.resolve(), (fake_user_dir / "jobs.sqlite").resolve())
+        self.assertEqual(cfg.browser_user_data_dir.resolve(), (fake_user_dir / "chrome-profile").resolve())
+
+        # 绝对不能指向项目源码根目录
+        project_root = Path(__file__).resolve().parent.parent
+        self.assertNotEqual(cfg.profile_path.resolve(), (project_root / "profile.json").resolve())
+        self.assertNotEqual(cfg.db_path.resolve(), (project_root / "jobs.sqlite").resolve())
+
+    def test_explicit_portable_mode(self):
+        """验证只有在显式设置 AI_JOB_HUNTER_DATA_DIR 时才启用指定便携目录。"""
+        portable_dir = Path(self.tmp_dir) / "portable_data"
+        portable_dir.mkdir(parents=True, exist_ok=True)
+
+        with patch.dict(os.environ, {"AI_JOB_HUNTER_DATA_DIR": str(portable_dir)}):
+            data_dir = get_default_data_dir()
+            self.assertEqual(data_dir.resolve(), portable_dir.resolve())
+
+    def test_chat_listener_prevents_duplicate_unverified_clicks(self):
+        """验证处于未确认状态 (clicked-unverified) 的求简历请求，后续轮询绝不重复触发点击。"""
+        mock_adapter = MagicMock()
+        mock_adapter.check_block.return_value = None
+        mock_adapter.conversation_history.return_value = {
+            "pane": True,
+            "company": "Test Co",
+            "name": "Alice HR",
+            "job": "Python Engineer",
+        }
+        mock_adapter.detect_resume_request.return_value = {
+            "ok": True,
+            "cards": [{
+                "has_agree_button": True,
+                "is_already_accepted": False,
+                "agree_button_text": "同意发送",
+                "snippet": "请发送您的简历附件",
+            }],
+        }
+        # 第一次点击：返回未确认状态
+        mock_adapter.accept_resume_request.return_value = {
+            "status": "clicked-unverified",
+            "verified": False,
+            "note": "点击后未确认页面状态",
+        }
+
+        mock_store = MagicMock()
+        listener = ChatListener(
+            adapter=mock_adapter,
+            store=mock_store,
+            auto_accept=True,
+            verbose=False,
+        )
+
+        # 第 1 轮：触发点击，标记为未确认
+        rep1 = listener.step()
+        self.assertEqual(rep1["resume_status"], "pending_request")
+        self.assertEqual(mock_adapter.accept_resume_request.call_count, 1)
+
+        # 第 2 轮：同一张卡片仍然存在，但 listener 必须自动防重，禁止重复点击！
+        rep2 = listener.step()
+        self.assertEqual(rep2["resume_status"], "already_attempted")
+        # accept_resume_request 调用计数依然为 1，未发生重复点击！
+        self.assertEqual(mock_adapter.accept_resume_request.call_count, 1)
+
     def test_m_zero_hardcoded_developer_paths(self):
         """M. 全仓库扫描：Python、BAT、PS1、MD、TOML、JSON 代码中 0 个 C:\\Users\\ASUS 硬编码路径。"""
         project_root = Path(__file__).resolve().parent.parent

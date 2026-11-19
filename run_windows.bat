@@ -84,7 +84,7 @@ goto MENU
 :SHOW_CONFIG
 echo.
 echo 当前本地环境与数据目录信息:
-"%PYTHON_CMD%" -c "from jobagent.config import load, get_default_data_dir; cfg=load(); print('数据存储目录:', get_default_data_dir()); print('数据库路径:', cfg.paths.db_path); print('个人画像路径:', cfg.paths.profile_path); print('Master简历路径:', cfg.paths.master_resume_path)"
+"%PYTHON_CMD%" -c "from jobagent.config import load, get_default_data_dir; cfg=load(); print('数据存储目录:', get_default_data_dir()); print('数据库路径:', cfg.db_path); print('个人画像路径:', cfg.profile_path); print('Master简历路径:', cfg.master_resume_path)"
 echo.
 goto MENU
 

@@ -5,7 +5,15 @@ echo   AI Job Hunter - 自动化求职 Chrome 独立启动器
 echo ========================================================
 echo.
 
-:: 优先调用 Python 核心引擎的受托管启动逻辑（自动分配安全端口与独立数据目录）
+:: 优先调用专属虚拟环境或系统 Python 核心引擎的受托管启动逻辑（自动分配安全端口与独立数据目录）
+if exist ".venv\Scripts\python.exe" (
+    echo [1/2] 正在调用专属虚拟环境 Python 拉起受托管 Chrome...
+    .venv\Scripts\python.exe -m jobagent browser
+    if %errorlevel% equ 0 (
+        timeout /t 5 >nul
+        exit /b 0
+    )
+)
 where python >nul 2>&1
 if %errorlevel% equ 0 (
     echo [1/2] 正在调用 Python 智能探针检测环境并拉起独立 Chrome...
