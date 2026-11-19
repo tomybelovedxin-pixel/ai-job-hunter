@@ -196,7 +196,10 @@ def analyze_text(
     grades: dict[str, Any] | None = None,
     engine: str = "rule",
 ) -> dict[str, Any]:
-    profile = profile or Profile.load(PROFILE_PATH)
+    if profile is None:
+        from .config import load as load_config
+        cfg_p = load_config().profile_path
+        profile = Profile.load(cfg_p if cfg_p.exists() else PROFILE_PATH)
     grades = grades or load_grades()
     grade_table = grades.get("capabilities", {})
     blob = f"{title}\n{text}"

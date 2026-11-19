@@ -102,8 +102,17 @@ class ResumeDoc:
         }
 
 
-def load_master(path: str | Path = MASTER_PATH) -> dict[str, Any]:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+def load_master(path: str | Path | None = None) -> dict[str, Any]:
+    target_p = Path(path) if path else MASTER_PATH
+    if not target_p.exists():
+        try:
+            from ..config import load as load_config
+            cfg_p = load_config().master_resume_path
+            if cfg_p.exists():
+                target_p = cfg_p
+        except Exception:
+            pass
+    return json.loads(target_p.read_text(encoding="utf-8"))
 
 
 def detect_direction(text: str, master: dict[str, Any] | None = None,

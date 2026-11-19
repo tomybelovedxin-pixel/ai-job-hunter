@@ -197,8 +197,21 @@ def _verified_grade(checks: list[CheckResult], declared: str) -> str:
 
 
 def load_claims(path: str | Path = DEFAULT_CLAIMS) -> dict[str, Any]:
-    path = Path(path)
-    data = json.loads(path.read_text(encoding="utf-8"))
+    target_p = Path(path)
+    if not target_p.exists():
+        try:
+            from .config import load as load_config
+            cfg_p = load_config().data_dir / "evidence_claims.json"
+            if cfg_p.exists():
+                target_p = cfg_p
+        except Exception:
+            pass
+    if not target_p.exists():
+        return {"claims": [], "legend": {}}
+    try:
+        data = json.loads(target_p.read_text(encoding="utf-8"))
+    except Exception:
+        return {"claims": [], "legend": {}}
     data.setdefault("claims", [])
     return data
 

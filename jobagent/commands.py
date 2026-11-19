@@ -140,8 +140,10 @@ def cmd_translate(args: Any) -> int:
 
 
 def cmd_analyze(args: Any) -> int:
-    store = _store(args)
-    profile = Profile.load(ROOT / "profile.json")
+    cfg = _config(args)
+    store = Store(cfg.db_path)
+    profile_p = cfg.profile_path if cfg.profile_path.exists() else (ROOT / "profile.json")
+    profile = Profile.load(profile_p)
     grades = load_grades()
     if args.job:
         targets = [store.get_job(int(args.job))]
@@ -235,7 +237,8 @@ def cmd_resume(args: Any) -> int:
 
 
 def cmd_materials(args: Any) -> int:
-    store = _store(args)
+    cfg = _config(args)
+    store = Store(cfg.db_path)
     job = store.get_job(int(args.job))
     if not job:
         print(f"没有这个岗位 #{args.job}")
@@ -255,7 +258,8 @@ def cmd_materials(args: Any) -> int:
             "checks": {"direction": {"value": args.direction or ""}},
         }
     else:
-        analysis = analyze_job(job, profile=Profile.load(ROOT / "profile.json"))
+        profile_p = cfg.profile_path if cfg.profile_path.exists() else (ROOT / "profile.json")
+        analysis = analyze_job(job, profile=Profile.load(profile_p))
         store.save_analysis(job["id"], analysis)
     bundle = build_all(job, analysis, llm=LLM() if args.llm else None)
     engine = "llm+rule" if bundle["quality"]["polished_by_model"] else "rule"
