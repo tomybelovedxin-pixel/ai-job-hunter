@@ -10,12 +10,16 @@ cities = ["全国", "远程"]
 salary_floor = 8
 
 [browser]
-# Chrome CDP 调试端口
+# Chrome CDP 调试端口（若被占用会自动寻找可用端口）
 port = 9222
-# 用户数据目录路径（存放独立登录态缓存，避免干扰日常浏览器）
-user_data_dir = "data/chrome-profile"
-# Chrome 可执行文件路径（留空则自动探测系统默认安装路径）
-exe = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+# 用户数据目录路径（存放独立登录态缓存，留空则自动使用系统标准独立数据空间）
+user_data_dir = "chrome-profile"
+# Chrome 可执行文件路径（留空则自动探测当前操作系统与安装路径）
+exe = ""
+
+[features]
+# 是否开启自动同意 HR 发起的简历附件请求（默认 false，开启后仅在安全校验全部通过时自动同意）
+auto_accept_resume = false
 
 [llm]
 # 物理级防偷跑机制：默认关闭外部计费调用，全流程优先走本地规则
@@ -28,6 +32,6 @@ timeout = 60
 max_output_tokens = 1500
 
 [paths]
-db = "data/jobs.sqlite"
-dump = "data/dump"
-report = "data/report.md"
+db = "jobs.sqlite"
+dump = "dump"
+report = "report.md"

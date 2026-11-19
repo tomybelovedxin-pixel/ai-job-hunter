@@ -3,11 +3,17 @@ echo "========================================================"
 echo "  AI Job Hunter - Browser Launcher (macOS / Linux)"
 echo "========================================================"
 
+if command -v python3 >/dev/null 2>&1; then
+    echo "Launching managed Chrome via python..."
+    python3 -m jobagent browser && exit 0
+fi
+
 PORT=9222
-USER_DIR="$(pwd)/data/chrome-profile"
+USER_DIR="${HOME}/.local/share/ai-job-hunter/chrome-profile"
 
 if [[ "$OSTYPE" == "darwin"* ]]; then
     CHROME_EXE="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    USER_DIR="${HOME}/Library/Application Support/AIJobHunter/chrome-profile"
 else
     CHROME_EXE=$(which google-chrome || which google-chrome-stable || which chromium || which chromium-browser)
 fi

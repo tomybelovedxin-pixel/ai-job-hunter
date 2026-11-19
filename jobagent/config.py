@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import sys
 try:
     import tomllib
 except ModuleNotFoundError:
@@ -16,7 +18,89 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_CONFIG = ROOT / "config.toml"
+
+
+def get_default_data_dir() -> Path:
+    """获取当前使用者的系统标准独立数据目录，完全脱离源码目录，多用户完全隔离。
+
+    优先级：
+    1. 环境变量 AI_JOB_HUNTER_DATA_DIR
+    2. 项目本地优先（若项目根目录下存在 config.toml 或 data/ 目录）
+    3. 操作系统标准用户目录：
+       - Windows: %LOCALAPPDATA%\\AIJobHunter
+       - macOS: ~/Library/Application Support/AIJobHunter
+       - Linux: $XDG_DATA_HOME/ai-job-hunter 或 ~/.local/share/ai-job-hunter
+    """
+    env_dir = os.environ.get("AI_JOB_HUNTER_DATA_DIR")
+    if env_dir:
+        return Path(env_dir).expanduser().resolve()
+
+    # 若项目目录内已显式配置了 config.toml，支持便携模式
+    if (ROOT / "config.toml").exists():
+        return ROOT
+
+    if sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            return Path(local_app_data) / "AIJobHunter"
+        return Path.home() / "AppData" / "Local" / "AIJobHunter"
+    elif sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "AIJobHunter"
+    else:
+        xdg_data = os.environ.get("XDG_DATA_HOME")
+        if xdg_data:
+            return Path(xdg_data) / "ai-job-hunter"
+        return Path.home() / ".local" / "share" / "ai-job-hunter"
+
+
+def init_user_data(data_dir: Path | None = None) -> tuple[Path, list[str]]:
+    """首次运行时初始化用户独立数据空间，自动从示例生成模板（绝不覆盖已有真实数据）。"""
+    target = (data_dir or get_default_data_dir()).resolve()
+    target.mkdir(parents=True, exist_ok=True)
+    created: list[str] = []
+
+    # 1. config.toml
+    cfg_file = target / "config.toml"
+    if not cfg_file.exists():
+        example_cfg = ROOT / "config.example.toml"
+        if example_cfg.exists():
+            shutil.copyfile(example_cfg, cfg_file)
+            created.append(str(cfg_file))
+
+    # 2. profile.json
+    prof_file = target / "profile.json"
+    if not prof_file.exists():
+        example_prof = ROOT / "profile.example.json"
+        if example_prof.exists():
+            shutil.copyfile(example_prof, prof_file)
+            created.append(str(prof_file))
+
+    # 3. master_resume.json
+    resume_file = target / "master_resume.json"
+    if not resume_file.exists():
+        example_resume = ROOT / "master_resume.example.json"
+        if example_resume.exists():
+            shutil.copyfile(example_resume, resume_file)
+            created.append(str(resume_file))
+
+    # 4. 必备子目录
+    (target / "chrome-profile").mkdir(parents=True, exist_ok=True)
+    (target / "dump").mkdir(parents=True, exist_ok=True)
+    (target / "output").mkdir(parents=True, exist_ok=True)
+
+    return target, created
+
+
+def get_default_config_path() -> Path:
+    data_dir = get_default_data_dir()
+    if (data_dir / "config.toml").exists():
+        return data_dir / "config.toml"
+    if (ROOT / "config.toml").exists():
+        return ROOT / "config.toml"
+    return data_dir / "config.toml"
+
+
+DEFAULT_CONFIG = get_default_config_path()
 
 
 def _abs(path: str | Path) -> Path:
@@ -79,14 +163,18 @@ class SearchSettings:
 @dataclass
 class Config:
     path: Path
+    data_dir: Path
     raw: dict[str, Any]
     profile_path: Path
+    master_resume_path: Path
     db_path: Path
     dump_dir: Path
     report_path: Path
+    output_dir: Path
     browser_port: int
     browser_user_data_dir: Path
     browser_exe: str
+    browser_session_file: Path
     scan_query: str
     scan_city: str
     scan_pages: int
@@ -94,9 +182,11 @@ class Config:
     search: SearchSettings
     sources_enabled: list[str]
     confirmations_path: Path
+    auto_accept_resume: bool = False
 
     def ensure_dirs(self) -> None:
         for path in (self.dump_dir, self.db_path.parent, self.report_path.parent,
+                     self.output_dir, self.browser_user_data_dir,
                      self.confirmations_path.parent):
             path.mkdir(parents=True, exist_ok=True)
 
@@ -113,8 +203,17 @@ def read_codex_config(path: str | Path) -> dict[str, Any]:
         return {}
 
 
-def load(path: str | Path = DEFAULT_CONFIG) -> Config:
+def load(path: str | Path | None = None) -> Config:
+    if path is None:
+        path = get_default_config_path()
     path = Path(path)
+
+    # 首次运行未初始化时，自动执行独立数据空间初识化
+    data_dir = path.parent
+    if not path.exists():
+        data_dir, _ = init_user_data(data_dir)
+        path = data_dir / "config.toml"
+
     raw: dict[str, Any] = {}
     if path.exists():
         with path.open("rb") as handle:
@@ -122,16 +221,32 @@ def load(path: str | Path = DEFAULT_CONFIG) -> Config:
 
     browser = raw.get("browser", {}) or {}
     paths = raw.get("paths", {}) or {}
+    custom_data_dir = paths.get("data_dir")
+    if custom_data_dir:
+        c_path = Path(custom_data_dir)
+        data_dir = c_path if c_path.is_absolute() else (path.parent / c_path).resolve()
     scan = raw.get("scan", {}) or {}
     llm_raw = raw.get("llm", {}) or {}
     search_raw = raw.get("search", {}) or {}
     sources_raw = raw.get("sources", {}) or {}
+    features_raw = raw.get("features", {}) or {}
 
-    profile_path = _abs(raw.get("profile", {}).get("path", "profile.json"))
+    def _resolve(val: str, default: str) -> Path:
+        target = Path(val or default)
+        if target.is_absolute():
+            return target
+        if (data_dir / target).exists():
+            return data_dir / target
+        if (ROOT / target).exists():
+            return ROOT / target
+        return data_dir / target
+
+    profile_path = _resolve(raw.get("profile", {}).get("path", ""), "profile.json")
+    master_resume_path = _resolve(raw.get("resume", {}).get("master_path", ""), "master_resume.json")
+
     profile_raw: dict[str, Any] = {}
     if profile_path.exists():
         import json
-
         try:
             profile_raw = json.loads(profile_path.read_text(encoding="utf-8"))
         except Exception:
@@ -145,7 +260,6 @@ def load(path: str | Path = DEFAULT_CONFIG) -> Config:
         per_source_limit=int(search_raw.get("per_source_limit", 30) or 30),
         exclude_keywords=[str(x) for x in search_raw.get("exclude_keywords", []) or []],
     )
-    # 没在 config.toml 里写检索范围时，从档案里取一份初值（都是可改的）
     if not search.keywords:
         seen: list[str] = []
         for direction in profile_raw.get("directions", []):
@@ -172,21 +286,35 @@ def load(path: str | Path = DEFAULT_CONFIG) -> Config:
         temperature=float(llm_raw.get("temperature", 0.3) or 0.3),
     )
 
+    db_path = _resolve(paths.get("db", ""), "jobs.sqlite")
+    dump_dir = _resolve(paths.get("dump", ""), "dump")
+    report_path = _resolve(paths.get("report", ""), "report.md")
+    output_dir = _resolve(paths.get("output", ""), "output")
+    confirmations_path = _resolve(paths.get("confirmations", ""), "confirmations.json")
+    browser_user_data_dir = _resolve(browser.get("user_data_dir", ""), "chrome-profile")
+    browser_session_file = data_dir / "browser_session.json"
+    auto_accept = bool(features_raw.get("auto_accept_resume", False))
+
     return Config(
         path=path,
+        data_dir=data_dir,
         raw=raw,
         profile_path=profile_path,
-        db_path=_abs(paths.get("db", "data/jobs.sqlite")),
-        dump_dir=_abs(paths.get("dump", "data/dump")),
-        report_path=_abs(paths.get("report", "data/report.md")),
+        master_resume_path=master_resume_path,
+        db_path=db_path,
+        dump_dir=dump_dir,
+        report_path=report_path,
+        output_dir=output_dir,
         browser_port=int(browser.get("port", 9222) or 9222),
-        browser_user_data_dir=_abs(browser.get("user_data_dir", "data/browser-profile")),
+        browser_user_data_dir=browser_user_data_dir,
         browser_exe=str(browser.get("exe", "") or ""),
+        browser_session_file=browser_session_file,
         scan_query=str(scan.get("default_query", "AI 应用开发")),
-        scan_city=str(scan.get("default_city", "泉州")),
+        scan_city=str(scan.get("default_city", "全国")),
         scan_pages=int(scan.get("pages", 1) or 1),
         llm=llm,
         search=search,
         sources_enabled=[str(x) for x in sources_raw.get("enabled", []) or []],
-        confirmations_path=_abs(paths.get("confirmations", "data/confirmations.json")),
+        confirmations_path=confirmations_path,
+        auto_accept_resume=auto_accept,
     )

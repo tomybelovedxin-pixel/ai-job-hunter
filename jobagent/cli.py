@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -13,71 +12,90 @@ from . import browser, cdp
 from . import commands
 from .adapters.boss import BossAdapter
 from .adapters.base import AdapterError, BlockedError
+from .config import Config, load as load_config, init_user_data, ROOT
 from .greeter import draft_greetings
 from .matcher import parse_salary, score_job
 from .profile import Profile
 from .store import Store, loads
 
-ROOT = Path(__file__).resolve().parent.parent
 
-
-def load_config(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    with open(path, "rb") as fh:
-        return tomllib.load(fh)
-
-
-def build_context(args: argparse.Namespace) -> tuple[dict[str, Any], Profile, Store]:
-    config_path = Path(args.config) if args.config else ROOT / "config.toml"
-    config = load_config(config_path)
-    profile_path = Path(
-        args.profile or (ROOT / config.get("profile", {}).get("path", "profile.json"))
-    )
-    if not profile_path.is_absolute():
-        profile_path = ROOT / profile_path
+def build_context(args: argparse.Namespace) -> tuple[Config, Profile, Store]:
+    config_arg = getattr(args, "config", None)
+    cfg = load_config(config_arg)
+    cfg.ensure_dirs()
+    profile_arg = getattr(args, "profile", None)
+    profile_path = Path(profile_arg) if profile_arg else cfg.profile_path
     profile = Profile.load(profile_path)
-    db_path = ROOT / config.get("paths", {}).get("db", "data/jobs.sqlite")
-    (ROOT / "data").mkdir(exist_ok=True)
-    store = Store(db_path)
-    return config, profile, store
+    store = Store(cfg.db_path)
+    return cfg, profile, store
 
 
-def ensure_session(config: dict[str, Any], *, launch: bool = True) -> cdp.CDP:
-    browser_cfg = config.get("browser", {})
-    port = int(browser_cfg.get("port", 9222))
+def ensure_session(cfg: Config, *, launch: bool = True) -> cdp.CDP:
+    managed = browser.get_managed_session(cfg.browser_user_data_dir)
+    port = managed["port"] if managed else cfg.browser_port
     if not browser.is_up(port):
         if not launch:
-            raise cdp.CDPError(f"{port} 端口上没有浏览器，先跑 python -m jobagent launch")
-        profile_dir = ROOT / browser_cfg.get("user_data_dir", "data/browser-profile")
-        state = browser.launch(
-            profile_dir, port=port, url="about:blank",
-            browser_path=browser_cfg.get("exe") or None,
+            raise cdp.CDPError(f"{port} 端口上没有受托管的浏览器，先跑 python -m jobagent browser")
+        state, port = browser.launch(
+            cfg.browser_user_data_dir,
+            port=port,
+            url="about:blank",
+            browser_path=cfg.browser_exe or None,
         )
-        print(f"浏览器已{'复用' if state == 'reused' else '启动'}", flush=True)
+        print(f"浏览器已{'复用' if state == 'reused' else '启动'}（端口 {port}）", flush=True)
     return cdp.attach(port)
 
 
-def make_adapter(session: cdp.CDP, config: dict[str, Any], *, verbose: bool = True) -> BossAdapter:
-    dump_dir = ROOT / config.get("paths", {}).get("dump", "data/dump")
-    return BossAdapter(session, dump_dir=dump_dir, verbose=verbose)
+def make_adapter(session: cdp.CDP, cfg: Config, *, verbose: bool = True) -> BossAdapter:
+    return BossAdapter(session, dump_dir=cfg.dump_dir, verbose=verbose)
 
 
 # ---------------- 命令 ----------------
 
-def cmd_launch(args: argparse.Namespace) -> int:
-    config, _, _ = build_context(args)
-    browser_cfg = config.get("browser", {})
-    port = int(browser_cfg.get("port", 9222))
-    profile_dir = ROOT / browser_cfg.get("user_data_dir", "data/browser-profile")
-    state = browser.launch(
-        profile_dir, port=port,
-        url=args.url or "https://www.zhipin.com/web/geek/job",
-        browser_path=browser_cfg.get("exe") or None,
+def cmd_init(args: argparse.Namespace) -> int:
+    target, created = init_user_data()
+    print("========================================================")
+    print("  AI Job Hunter 独立本地用户数据目录初始化完成")
+    print("========================================================")
+    print(f"数据根目录: {target}")
+    if created:
+        print("新生成的基础配置模板:")
+        for c in created:
+            print(f"  + {c}")
+    else:
+        print("原有配置文件完好保留，未发生覆盖。")
+    print("\n你可以直接按需编辑 profile.json 与 master_resume.json 完善个人经历。")
+    return 0
+
+
+def cmd_browser(args: argparse.Namespace) -> int:
+    cfg = load_config(getattr(args, "config", None))
+    cfg.ensure_dirs()
+    state, port = browser.launch(
+        cfg.browser_user_data_dir,
+        port=cfg.browser_port,
+        url=getattr(args, "url", None) or "https://www.zhipin.com/web/geek/chat",
+        browser_path=cfg.browser_exe or None,
     )
-    print(f"浏览器 {'复用已有实例' if state == 'reused' else '已启动'}（端口 {port}）")
-    print(f"配置目录: {profile_dir}")
-    print("接下来在这个窗口里手工登录一次，登录态会长久留在该配置目录里。")
+    print("========================================================")
+    print(f"  Chrome 专属求职会话 {'已安全复用' if state == 'reused' else '已成功启动'}")
+    print("========================================================")
+    print(f"监听调试端口: {port}")
+    print(f"独立用户目录: {cfg.browser_user_data_dir}")
+    print("提示：请在弹出的浏览器中登录 BOSS 直聘账号，保持窗口打开即可进行自动化求职。")
+    return 0
+
+
+def cmd_launch(args: argparse.Namespace) -> int:
+    return cmd_browser(args)
+
+
+def cmd_listen(args: argparse.Namespace) -> int:
+    from .listener import ChatListener
+    cfg = load_config(getattr(args, "config", None))
+    auto_accept = True if getattr(args, "auto_accept", False) else cfg.auto_accept_resume
+    listener = ChatListener(config=cfg, auto_accept=auto_accept, verbose=True)
+    listener.run_forever(interval=getattr(args, "interval", 6.0))
     return 0
 
 
@@ -89,7 +107,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
         session.navigate(adapter.home)
         session.wait_ready(timeout=25)
         time.sleep(3)  # 未登录时站点先渲染外壳再跳登录页，等它跳完再判断
-    port = int(config.get("browser", {}).get("port", 9222))
+    port = config.browser_port
     print("浏览器:", cdp.http_json(port, "/json/version").get("Browser"))
     print("当前页面:", session.url())
     print("标题:", session.evaluate("document.title", await_promise=False))
@@ -130,8 +148,8 @@ def scan_with_login_wait(adapter: BossAdapter, kwargs: dict[str, Any],
 
 def cmd_scan(args: argparse.Namespace) -> int:
     config, _, store = build_context(args)
-    query = args.query or config.get("scan", {}).get("default_query", "AI 应用开发")
-    city = args.city or config.get("scan", {}).get("default_city", "泉州")
+    query = args.query or config.scan_query
+    city = args.city or config.scan_city
     session = ensure_session(config)
     adapter = make_adapter(session, config)
     run_id = store.start_run("scan")
@@ -346,7 +364,7 @@ def cmd_report(args: argparse.Namespace) -> int:
         if gaps:
             lines.append("- 待确认：" + "；".join(gaps[:4]))
         lines.append("")
-    report_path = ROOT / config.get("paths", {}).get("report", "data/report.md")
+    report_path = config.report_path
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text("\n".join(lines), encoding="utf-8")
     print(f"报告写到 {report_path}")
@@ -365,13 +383,26 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jobagent", description="自动找工作流水线")
-    parser.add_argument("--config", help="配置文件路径，默认 config.toml")
+    parser.add_argument("--config", help="配置文件路径，默认优先读用户独立数据空间")
     parser.add_argument("--profile", help="候选人档案路径，默认 profile.json")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("launch", help="起一个带调试端口的浏览器")
+    # ---------- 环境与浏览器 ----------
+    p = sub.add_parser("init", help="初始化独立用户数据空间与配置模板")
+    p.set_defaults(func=cmd_init)
+
+    p = sub.add_parser("browser", help="启动受托管的独立 Chrome 调试浏览器")
+    p.add_argument("--url", help="启动后打开的地址")
+    p.set_defaults(func=cmd_browser)
+
+    p = sub.add_parser("launch", help="起一个带调试端口的浏览器（browser 别名）")
     p.add_argument("--url", help="启动后打开的地址")
     p.set_defaults(func=cmd_launch)
+
+    p = sub.add_parser("listen", help="启动会话监听守护进程，实时检测新消息并安全处理附件简历")
+    p.add_argument("--interval", type=float, default=6.0, help="轮询间隔秒数")
+    p.add_argument("--auto-accept", action="store_true", help="显式开启自动同意简历附件")
+    p.set_defaults(func=cmd_listen)
 
     p = sub.add_parser("probe", help="检查浏览器连接与风控状态")
     p.add_argument("--no-nav", action="store_true", help="不跳转，只看当前页面")
