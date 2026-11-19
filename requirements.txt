@@ -1,5 +1,14 @@
+# 核心文档与简历排版渲染
 reportlab>=4.0.0
 python-docx>=1.0.0
+pillow>=10.0.0
+
+# 文本与模糊匹配、JD结构化分析
 beautifulsoup4>=4.12.0
 rapidfuzz>=3.0.0
-pillow>=10.0.0
+
+# Python 3.10 及更低版本 TOML 兼容
+tomli>=2.0.0; python_version < "3.11"
+
+# 质量工程与自动化测试
+pytest>=7.0.0

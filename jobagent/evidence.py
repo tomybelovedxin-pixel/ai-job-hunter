@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -26,12 +27,11 @@ from .config import ROOT
 DEFAULT_CLAIMS = ROOT / "evidence_claims.json"
 REPORT_PATH = ROOT / "data" / "evidence_report.json"
 
-# 允许自动执行检查的脚本前缀（本项目自有的测试与工具）
-RUN_WHITELIST = (
-    str(ROOT / "tests"),
-    str(ROOT / "tools"),
-    r"C:\Users\ASUS\Documents\ChatGPT\去ai味道\tests",
-)
+# 允许自动执行检查的安全脚本目录（仅限本项目自身的测试与工具目录）
+RUN_WHITELIST_DIRS = [
+    (ROOT / "tests").resolve(),
+    (ROOT / "tools").resolve(),
+]
 
 GRADE_ORDER = {"A": 4, "B": 3, "C": 2, "D": 1}
 
@@ -93,10 +93,20 @@ class ClaimResult:
         }
 
 
+def _is_safe_script_path(resolved: Path) -> bool:
+    for base in RUN_WHITELIST_DIRS:
+        try:
+            resolved.relative_to(base)
+            return True
+        except (ValueError, RuntimeError):
+            pass
+    return False
+
+
 def _run_script(path: Path, timeout: float = 180) -> CheckResult:
     resolved = path.resolve()
-    if not any(str(resolved).startswith(prefix) for prefix in RUN_WHITELIST):
-        return CheckResult("run", str(path), False, "不在允许自动执行的脚本白名单里")
+    if not _is_safe_script_path(resolved):
+        return CheckResult("run", str(path), False, "不在允许自动执行的脚本安全白名单目录内")
     if resolved.suffix.lower() == ".ps1":
         launcher = shutil.which("pwsh") or shutil.which("powershell")
         if not launcher:
@@ -136,13 +146,15 @@ def _check(kind: str, value: str, note: str = "") -> CheckResult:
         result.note = note
         return result
     if kind == "scheduled_task":
-        # powershell 起进程偶尔很慢，重试一次再下结论，避免把瞬时失败判成"没有证据"
+        if not re.match(r"^[A-Za-z0-9_\-\.\s]{1,128}$", value):
+            return CheckResult(kind, value, False, "计划任务名称格式不合规，包含非法字符", note)
         last = ""
         for attempt in range(2):
             try:
                 proc = subprocess.run(
                     ["powershell", "-NoProfile", "-Command",
-                     f"(Get-ScheduledTask -TaskName '{value}' -ErrorAction Stop).TaskName"],
+                     "param($taskName) (Get-ScheduledTask -TaskName $taskName -ErrorAction Stop).TaskName",
+                     value],
                     capture_output=True, text=True, errors="replace", timeout=60,
                 )
                 output = (proc.stdout or proc.stderr or "").strip()
@@ -161,13 +173,27 @@ def _check(kind: str, value: str, note: str = "") -> CheckResult:
 
 
 def _verified_grade(checks: list[CheckResult], declared: str) -> str:
+    """严谨保守的证据核定：仅允许降级或确信维持，严禁无理升格。"""
+    declared = (declared or "D").upper()
+    if declared not in GRADE_ORDER:
+        declared = "D"
     hard = [c for c in checks if c.kind != "statement"]
+    if not hard:
+        # 仅有自述无硬证据，哪怕声明 A/B 也坚决降至 D
+        return "D"
     passed = [c for c in hard if c.ok]
     if not passed:
         return "D"
     if len(passed) == len(hard):
-        return declared if declared in ("A", "B") else "A"
-    return "B"
+        # 全部实物硬证据通过：核定维持声明等级，绝不升格
+        return declared
+    # 存在部分未通过硬证据：按声明等级降级判定
+    current_val = GRADE_ORDER.get(declared, 1)
+    downgraded_val = max(1, current_val - 1)
+    for g, val in GRADE_ORDER.items():
+        if val == downgraded_val:
+            return g
+    return "D"
 
 
 def load_claims(path: str | Path = DEFAULT_CLAIMS) -> dict[str, Any]:

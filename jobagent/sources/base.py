@@ -118,9 +118,18 @@ def _patterns(keywords: list[str]) -> list[re.Pattern[str]]:
     return out
 
 
+def _validate_safe_url(url: str) -> None:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise ValueError(f"只允许 http/https 协议请求，禁止访问非法协议: {parsed.scheme}")
+    if not parsed.netloc:
+        raise ValueError(f"URL 缺少有效主机名: {url}")
+
+
 def http_json(url: str, *, params: dict[str, Any] | None = None, timeout: float = 25,
               headers: dict[str, str] | None = None, retries: int = 2) -> Any:
     """取 JSON。失败重试，仍失败抛 SourceError（带原始错误文本）。"""
+    _validate_safe_url(url)
     if params:
         query = urllib.parse.urlencode(
             {k: v for k, v in params.items() if v not in (None, "")}, doseq=True
@@ -156,11 +165,8 @@ def http_post_json(url: str, *, form: dict[str, Any] | None = None,
                    json_body: dict[str, Any] | None = None,
                    extra_headers: dict[str, str] | None = None,
                    timeout: float = 25, retries: int = 2) -> Any:
-    """POST 取 JSON，表单或 JSON 体二选一。
-
-    有些官网接口（百度社招、网易社招）只接受表单提交，并且会校验 Referer，
-    所以 Referer/Origin 这类头由调用方按实测值传进来，不写猜的值。
-    """
+    """POST 取 JSON，表单或 JSON 体二选一。"""
+    _validate_safe_url(url)
     body: bytes | None = None
     headers = {
         "User-Agent": USER_AGENT,

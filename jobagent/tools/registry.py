@@ -380,19 +380,21 @@ def _verify_text_quality() -> tuple[bool, str]:
 
 
 def _tool_natural_writing_skill(**kwargs: Any) -> Any:
-    root = Path(r"C:\Users\ASUS\Documents\ChatGPT\去ai味道")
-    skill = root / "src" / "skills" / "natural-writing" / "SKILL.md"
-    rules = Path(r"C:\Users\ASUS\.codex\AGENTS.md")
+    custom_root = os.environ.get("NATURAL_WRITING_ROOT")
+    root = Path(custom_root) if custom_root else (Path.home() / ".codex" / "skills" / "natural-writing")
+    skill = root / "SKILL.md"
+    rules = Path.home() / ".codex" / "AGENTS.md"
     return {
         "skill_path": str(skill), "skill_exists": skill.exists(),
         "global_rules": str(rules), "global_rules_exists": rules.exists(),
-        "usage": "在改写简历、求职信或招聘私信时按其规则执行；只在本机 Codex 生效",
+        "usage": "在改写简历、求职信或招聘私信时按其规则执行",
     }
 
 
 def _verify_natural_writing() -> tuple[bool, str]:
-    skill = Path(r"C:\Users\ASUS\Documents\ChatGPT\去ai味道\src\skills\natural-writing\SKILL.md")
-    rules = Path(r"C:\Users\ASUS\.codex\AGENTS.md")
+    custom_root = os.environ.get("NATURAL_WRITING_ROOT")
+    skill = (Path(custom_root) / "SKILL.md") if custom_root else (Path.home() / ".codex" / "skills" / "natural-writing" / "SKILL.md")
+    rules = Path.home() / ".codex" / "AGENTS.md"
     ok = skill.exists() and rules.exists()
     return ok, f"技能文件 {'在' if skill.exists() else '不在'}，全局规则 {'在' if rules.exists() else '不在'}"
 
@@ -662,10 +664,10 @@ def _register_builtins() -> None:
         permissions="读本机 Codex 配置目录（只读）",
         inputs="无",
         outputs="技能文件与全局规则的位置及可用状态",
-        runtime="本机 Codex 插件 local-natural-expression",
-        entry="C:/Users/ASUS/.codex/plugins/cache/local-natural-expression",
+        runtime="Codex 插件 local-natural-expression",
+        entry=str(Path.home() / ".codex" / "plugins" / "cache" / "local-natural-expression"),
         failure_policy="文件缺失时提示重新安装插件恢复，不影响其它功能",
-        repo="https://github.com/ASUS/去ai味道（本机项目）",
+        repo="https://github.com/tomybelovedxin-pixel/ai-job-hunter",
         func=_tool_natural_writing_skill,
         verify=_verify_natural_writing,
         auto_call=False,

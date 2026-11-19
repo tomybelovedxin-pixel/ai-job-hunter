@@ -340,18 +340,20 @@ def list_targets(port: int) -> list[dict[str, Any]]:
 
 
 def attach(port: int, url_contains: str | None = None) -> CDP:
-    """挑一个页面标签页连上去；url_contains 为空时取第一个。"""
+    """挑一个页面标签页连上去；url_contains 为空时取首个可用标签页，指定时严格核验目标。"""
     targets = list_targets(port)
     if not targets:
         raise CDPError("没有可用的页面标签页")
-    picked = None
     if url_contains:
         for t in targets:
             if url_contains in (t.get("url") or ""):
-                picked = t
-                break
-    picked = picked or targets[0]
-    return CDP(picked["webSocketDebuggerUrl"])
+                return CDP(t["webSocketDebuggerUrl"])
+        raise CDPError(
+            f"未找到 URL 包含 '{url_contains}' 的浏览器标签页。\n"
+            f"当前已有标签页: {[t.get('url', '') for t in targets]}\n"
+            f"为保障安全，已拒绝随机附着到其他非目标网页。"
+        )
+    return CDP(targets[0]["webSocketDebuggerUrl"])
 
 
 if __name__ == "__main__":  # 快速自检：python -m jobagent.cdp

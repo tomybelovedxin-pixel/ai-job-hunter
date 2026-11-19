@@ -10,13 +10,18 @@ from . import cdp
 
 DEFAULT_PORT = 9222
 
-EDGE_CANDIDATES = [
-    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-]
+# 浏览器规范：仅允许使用 Google Chrome，绝不调用或触碰 Microsoft Edge
 CHROME_CANDIDATES = [
+    # 64-bit Windows
     r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    # 32-bit Windows
     r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    # Local AppData Windows
+    str(Path.home() / "AppData" / "Local" / "Google" / "Chrome" / "Application" / "chrome.exe"),
+    # Linux / macOS 备用路径
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium-browser",
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
 ]
 
 
@@ -25,10 +30,10 @@ def find_browser(explicit: str | None = None) -> str:
         if not Path(explicit).exists():
             raise FileNotFoundError(f"找不到浏览器可执行文件: {explicit}")
         return explicit
-    for path in EDGE_CANDIDATES + CHROME_CANDIDATES:
+    for path in CHROME_CANDIDATES:
         if Path(path).exists():
             return path
-    raise FileNotFoundError("这台机器上没找到 Edge 或 Chrome")
+    raise FileNotFoundError("未检测到 Google Chrome。本智能体严格限定使用 Google Chrome，请确认已安装。")
 
 
 def is_up(port: int = DEFAULT_PORT, timeout: float = 1.0) -> bool:

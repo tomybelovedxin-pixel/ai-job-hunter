@@ -127,7 +127,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _static(self, name: str) -> None:
         target = (STATIC / name).resolve()
-        if not str(target).startswith(str(STATIC.resolve())) or not target.exists():
+        try:
+            target.relative_to(STATIC.resolve())
+        except (ValueError, RuntimeError):
+            return self._error("禁止越权路径访问", 403)
+        if not target.exists() or not target.is_file():
             return self._error("文件不存在", 404)
         body = target.read_bytes()
         self.send_response(200)
@@ -137,15 +141,31 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _file(self, raw_path: str) -> None:
-        """只允许下载项目目录里的文件，防止越权读取。"""
+        """安全下载项目生成的文件，防越权与目录穿越。"""
         if not raw_path:
             return self._error("缺少 path 参数", 400)
         target = Path(raw_path)
         if not target.is_absolute():
             target = ROOT / target
         resolved = target.resolve()
-        if not str(resolved).startswith(str(ROOT)) or not resolved.exists():
+        try:
+            resolved.relative_to(ROOT.resolve())
+        except (ValueError, RuntimeError):
             return self._error("只允许访问项目目录内的文件", 403)
+
+        # 绝对保护敏感凭据、数据库与个人主画像不被 WebUI 接口泄露
+        forbidden_exts = {".key", ".pem", ".env", ".sqlite", ".sqlite3", ".db"}
+        forbidden_files = {"profile.json", "master_resume.json", "config.toml", "evidence_claims.json"}
+        if (
+            resolved.suffix.lower() in forbidden_exts
+            or resolved.name.lower() in forbidden_files
+            or any(part.startswith(".") for part in resolved.relative_to(ROOT.resolve()).parts)
+        ):
+            return self._error("禁止通过 Web 接口访问系统核心配置或隐私数据文件", 403)
+
+        if not resolved.exists() or not resolved.is_file():
+            return self._error("文件不存在", 404)
+
         body = resolved.read_bytes()
         suffix = resolved.suffix.lower()
         content_type = {

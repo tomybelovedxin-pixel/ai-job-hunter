@@ -536,8 +536,12 @@ class BossAdapter(Adapter):
         # --- 闸门一：发送前核对会话，已经发过就不发 ---
         history = self.conversation_history()
         if not history.get("pane"):
-            # 读不到会话面板时不做去重判断，但把这一情况留在结果里，便于排查
-            result["note"] = "会话面板没读到，跳过发送前核对"
+            time.sleep(1.0)
+            history = self.conversation_history()
+        if not history.get("pane"):
+            snapshot = self.dump_html("send-nopane")
+            raise AdapterError(f"读取当前会话内容失败，无法核对会话归属与防重历史，为防止误发已拒绝发送。快照: {snapshot}")
+
         decision = guards.decide_send(history, text)
         if decision["action"] == "skip":
             result["deduped"] = True

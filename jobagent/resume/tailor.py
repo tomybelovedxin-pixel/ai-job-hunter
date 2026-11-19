@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..evidence import GRADE_ORDER
+
 MASTER_PATH = Path(__file__).resolve().parent.parent.parent / "master_resume.json"
 
 # 方向 → 关键词。命中越多相关度越高；一个都不命中就用 default。
@@ -203,12 +205,26 @@ def build_doc(
         direction, _ = detect_direction(job_text, master, title=str(job.get("title") or ""))
 
     grades = _verified_index(report)
+    warnings: list[str] = []
 
-    usable_projects = [
-        project for project in master.get("projects", [])
-        if any(grades.get(claim, project.get("grade", "D")) in ("A", "B")
-               for claim in project.get("claims", [])) or not project.get("claims")
-    ]
+    usable_projects: list[dict[str, Any]] = []
+    for project in master.get("projects", []):
+        claims = project.get("claims") or []
+        if report:
+            # 严格门禁：提供证据报告时，项目必须有关联证据且至少有一项核定为 A 或 B 级
+            if not claims:
+                warnings.append(f"项目「{project.get('name')}」未关联任何能力证据，已跳过以防虚构")
+                continue
+            v_levels = [grades.get(c, "D") for c in claims]
+            if any(level in ("A", "B") for level in v_levels):
+                usable_projects.append(project)
+            else:
+                warnings.append(f"项目「{project.get('name')}」核验等级不足（{v_levels}），已跳过")
+        else:
+            # 未提供报告时（如纯离线预览），项目自身声明等级必须是 A 或 B
+            if project.get("grade", "B") in ("A", "B"):
+                usable_projects.append(project)
+
     scored = sorted(
         ((project, _project_relevance(project, direction, job_text)) for project in usable_projects),
         key=lambda item: item[1],
@@ -227,12 +243,17 @@ def build_doc(
     projects: list[dict[str, Any]] = []
     others: list[dict[str, str]] = []
     used_claims: list[str] = []
-    warnings: list[str] = []
     for project in selected:
         bullets = (project.get("bullets", {}) or {}).get(direction) \
             or (project.get("bullets", {}) or {}).get("default") or []
         if not bullets:
             continue
+        if report and project.get("claims"):
+            computed_grade = max([grades.get(c, "D") for c in project.get("claims", [])],
+                                 key=lambda g: GRADE_ORDER.get(g, 1))
+        else:
+            computed_grade = project.get("grade", "B")
+
         projects.append({
             "id": project.get("id"),
             "name": project.get("name"),
@@ -242,11 +263,11 @@ def build_doc(
             "tech": list(project.get("tech", [])),
             "bullets": list(bullets)[:max_bullets],
             "result": project.get("result", ""),
-            "grade": grades.get((project.get("claims") or ["", ""])[0], project.get("grade", "D")),
+            "grade": computed_grade,
         })
         used_claims.extend(project.get("claims", []))
-        if project.get("grade") == "B":
-            warnings.append(f"{project.get('name')} 的等级是 B，只保留有依据的部分")
+        if computed_grade == "B":
+            warnings.append(f"{project.get('name')} 的核验等级是 B，只保留有依据的部分")
 
     # 没进正文的项目，压成一行放在"其他经历"里，不丢信息也不占版面
     for project in usable_projects:
@@ -266,9 +287,10 @@ def build_doc(
     kept_groups = []
     for group in groups:
         claim_ids = group.get("claims", [])
-        if claim_ids and all(grades.get(claim, "D") not in ("A", "B") for claim in claim_ids):
-            warnings.append(f"技能组「{group.get('label')}」没有足够证据，已省略")
-            continue
+        if report and claim_ids:
+            if all(grades.get(claim, "D") not in ("A", "B") for claim in claim_ids):
+                warnings.append(f"技能组「{group.get('label')}」无有效 A/B 级证据关联，已省略")
+                continue
         kept_groups.append({"label": group.get("label", ""), "items": group.get("items", "")})
         used_claims.extend(claim_ids)
 
